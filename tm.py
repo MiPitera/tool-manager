@@ -17,4 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tm.cli import app  # noqa: E402
 
 if __name__ == "__main__":
-    app()
+    # Force the program name to "tm" (not "tm.py"): we run via `uv run --script tm.py`,
+    # and Click derives shell-completion names from argv[0]. Without this the completion
+    # binds to "tm.py" with an invalid env var (_TM.PY_COMPLETE) and never fires.
+    app(prog_name="tm")
