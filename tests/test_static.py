@@ -134,3 +134,12 @@ def test_method_override_skips_static(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_run_method", lambda *a, **k: {"tool": "/x"})
     m = core.install_from_github(cfg, "owner/tool", method="uv_project", assume_yes=True)
     assert m.method == "uv_project"
+
+
+def test_clone_url_normalization():
+    from tm.installers.methods import _clone_url
+    assert _clone_url("AlessandroZ/LaZagne") == "https://github.com/AlessandroZ/LaZagne.git"
+    assert _clone_url("https://github.com/x/y") == "https://github.com/x/y"
+    assert _clone_url("https://github.com/x/y.git") == "https://github.com/x/y.git"
+    assert _clone_url("git@github.com:x/y.git") == "git@github.com:x/y.git"
+    assert _clone_url("/tmp/local/repo") == "/tmp/local/repo"

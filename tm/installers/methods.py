@@ -20,7 +20,20 @@ def _uv_env(cfg: Config) -> dict:
 def clone(url: str, src: Path, log: Logger) -> None:
     if src.exists():
         shutil.rmtree(src)
-    run(["git", "clone", "--depth", "1", url, str(src)], log=log)
+    run(["git", "clone", "--depth", "1", _clone_url(url), str(src)], log=log)
+
+
+def _clone_url(url: str) -> str:
+    """Normalize a GitHub shorthand (owner/repo) or page URL into a git-clonable URL."""
+    u = url.strip()
+    if u.startswith(("http://", "https://", "git@", "ssh://", "file://", "/")) or u.endswith(".git"):
+        return u
+    try:
+        from tm.github import parse_url
+        owner, repo = parse_url(u)
+        return f"https://github.com/{owner}/{repo}.git"
+    except Exception:
+        return u
 
 
 # ---------------------------------------------------------------- release binaries
