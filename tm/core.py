@@ -297,8 +297,14 @@ def import_local(cfg: Config, path: str, *, name: str = "", entry: str = "",
     if not name:
         raise InstallError("could not derive a name; pass --name")
     tool_dir = cfg.tool_dir(name)
-    if tool_dir.exists() and any(tool_dir.iterdir()):
-        raise InstallError(f"'{name}' already exists ({tool_dir}); use `tm remove {name}` or --name")
+    # a directory already sitting in ~/tools (source == destination) → import in place
+    in_place = src.is_dir() and src == tool_dir
+    if not in_place and not manifest.path_for(tool_dir).exists() \
+            and tool_dir.exists() and any(tool_dir.iterdir()):
+        raise InstallError(f"'{name}' directory already exists ({tool_dir}); "
+                           f"use `tm remove {name}` to clear it, or pass --name")
+    if not in_place and manifest.path_for(tool_dir).exists():
+        raise InstallError(f"'{name}' already exists; use `tm remove {name}` or --name")
     log = Logger(tool_dir / "install.log")
 
     app = tool_dir / "app"
@@ -307,11 +313,15 @@ def import_local(cfg: Config, path: str, *, name: str = "", entry: str = "",
         dest = app / src.name
         _place(src, dest, copy, log)
         candidates = [dest]
+    elif in_place:
+        _restructure_in_place(tool_dir, app, log)
+        candidates = archive.find_programs(app)
     else:
         _place_dir(src, app, copy, log)
         candidates = archive.find_programs(app)
     if not candidates:
-        shutil.rmtree(tool_dir, ignore_errors=True)
+        if not in_place:  # never delete the user's own directory on an in-place import
+            shutil.rmtree(tool_dir, ignore_errors=True)
         raise InstallError("no runnable file found; pass --entry, or use `tm install` for "
                            "projects that need building")
 
@@ -396,6 +406,17 @@ def _place_dir(src: Path, app: Path, copy: bool, log: Logger) -> None:
         log.write(f"move failed ({e}); falling back to copy")
         shutil.copytree(src, app, dirs_exist_ok=True, symlinks=True)
         shutil.rmtree(src, ignore_errors=True)
+
+
+def _restructure_in_place(tool_dir: Path, app: Path, log: Logger) -> None:
+    """Source dir already IS the tool dir: move its contents into app/ (keep tm's own files)."""
+    app.mkdir(exist_ok=True)
+    keep = {"app", "manifest.json", "install.log"}
+    for child in list(tool_dir.iterdir()):
+        if child.name in keep:
+            continue
+        shutil.move(str(child), str(app / child.name))
+    log.write(f"restructured {tool_dir} in place -> {app}")
 
 
 def _choose_entries(candidates: list[Path], app: Path, name: str, entry: str,

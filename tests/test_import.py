@@ -147,3 +147,30 @@ def test_import_no_runnable(tmp_path):
     with pytest.raises(core.InstallError):
         core.import_local(cfg, str(d), assume_yes=True)
     assert not cfg.tool_dir("empty").exists()  # cleaned up
+
+
+def test_import_in_place_dir_already_in_tools(tmp_path):
+    """A directory that already lives in ~/tools (source == tool dir) imports in place."""
+    cfg = _cfg(tmp_path / "root")
+    tool_dir = cfg.tool_dir("lazagne")
+    tool_dir.mkdir(parents=True)
+    _elf(tool_dir / "lazagne")           # the program, sitting directly in the tool dir
+    (tool_dir / "README.md").write_text("docs")
+    m = core.import_local(cfg, str(tool_dir), assume_yes=True)
+    assert m.method == "imported" and "lazagne" in m.entrypoints
+    # contents moved under app/, tm files kept at top level
+    assert (tool_dir / "app" / "lazagne").exists()
+    assert (tool_dir / "app" / "README.md").exists()
+    assert (tool_dir / "manifest.json").exists()
+
+
+def test_import_in_place_no_runnable_keeps_dir(tmp_path):
+    """In-place import with nothing runnable must NOT delete the user's directory."""
+    cfg = _cfg(tmp_path / "root")
+    tool_dir = cfg.tool_dir("docsonly")
+    tool_dir.mkdir(parents=True)
+    (tool_dir / "notes.txt").write_text("hello")
+    with pytest.raises(core.InstallError):
+        core.import_local(cfg, str(tool_dir), assume_yes=True)
+    assert tool_dir.exists()                       # not deleted
+    assert (tool_dir / "app" / "notes.txt").exists()  # contents preserved under app/

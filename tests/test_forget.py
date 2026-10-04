@@ -88,3 +88,26 @@ def test_tags_single_token():
     out = tagmod.clean(["web app", "recon", "Password Cracking"])
     assert all(" " not in t for t in out)
     assert out == ["web-app", "recon", "password-cracking"]
+
+
+def test_remove_orphaned_directory(tmp_path, monkeypatch):
+    """A ~/tools/<name> dir with no manifest (failed import) can still be removed."""
+    root = tmp_path / "root"
+    cfg = Config(root=root, models={}, agents={}, docker={})
+    cfg.bin_dir.mkdir(parents=True, exist_ok=True)
+    orphan = cfg.tool_dir("lazagne")
+    orphan.mkdir(parents=True)
+    (orphan / "stuff.txt").write_text("x")
+    monkeypatch.setenv("TM_ROOT", str(root))
+
+    r = runner.invoke(app, ["remove", "lazagne/", "--yes"])  # trailing slash tolerated
+    assert r.exit_code == 0, r.output
+    assert not orphan.exists()
+
+
+def test_remove_truly_missing(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    (root).mkdir(parents=True)
+    monkeypatch.setenv("TM_ROOT", str(root))
+    r = runner.invoke(app, ["remove", "nope", "--yes"])
+    assert r.exit_code != 0

@@ -185,15 +185,23 @@ def info(name: str = typer.Argument(..., autocompletion=_complete_tool)):
 
 @app.command()
 def remove(name: str = typer.Argument(..., autocompletion=_complete_tool), yes: bool = typer.Option(False, "--yes", "-y")):
-    """Remove a tool: shims, directory and registry entry (apt packages are uninstalled)."""
+    """Remove a tool: shims, directory and registry entry (apt packages are uninstalled).
+
+    Also clears an orphaned ~/tools/<name> directory that has no manifest (e.g. a failed import).
+    """
     cfg = _cfg()
-    d, m = _load_tool(cfg, name)
-    from tm.util import confirm
-    if not confirm(f"Remove {name} ({m.method})?", assume_yes=yes):
+    name = name.rstrip("/")  # tolerate tab-completed "name/" from a directory
+    from tm.util import confirm, Logger
+    d = cfg.tool_dir(name)
+    m = manifest.load(d) if manifest.path_for(d).exists() else None
+    if m is None and not d.exists():
+        _die(f"no such tool: {name}")
+
+    label = m.method if m else "untracked directory"
+    if not confirm(f"Remove {name} ({label})?", assume_yes=yes):
         raise typer.Exit()
-    if m.method == "apt":
+    if m and m.method == "apt":
         from tm.installers import apt as aptmod
-        from tm.util import Logger
         try:
             aptmod.apt_remove(m.apt_package or name, Logger(None))
         except InstallError as e:

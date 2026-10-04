@@ -80,7 +80,10 @@ tm install <url>
 `~/tools/<name>/app/` (use `--copy` to keep the original), the entrypoint is auto-detected (ELF
 binaries, `+x` files, shebang scripts, `.py` with a main; override with `--entry`), shimmed with
 absolute paths, and described + tagged by the agent. `tm doctor` lists unmanaged binaries you can
-pull in this way.
+pull in this way. If the path is a directory that already lives inside `~/tools` (e.g. you cloned
+it there), it's imported **in place** — its contents move into that dir's `app/` subdir. A leftover
+`~/tools/<name>` directory with no manifest (from a failed import) can be cleared with
+`tm remove <name>`.
 
 **Programs for another OS.** When a tool ships the same program built for several systems
 (e.g. `tool`, `tool.exe`, `tool-mac`), all builds are imported as separate commands. An agent
