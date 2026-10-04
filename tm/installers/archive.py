@@ -155,6 +155,30 @@ SKIP_SUFFIXES = {".so", ".dll", ".dylib", ".a", ".o", ".txt", ".md", ".json",
                  ".png", ".jpg", ".gif", ".svg", ".csv", ".html"}
 
 
+def detect_os(p: Path) -> str:
+    """Target OS of an executable from its magic bytes. '' if unknown.
+
+    linux (ELF or shebang script), windows (PE/MZ), macos (Mach-O, incl. fat).
+    """
+    try:
+        with p.open("rb") as f:
+            head = f.read(4)
+    except OSError:
+        return ""
+    if head[:4] == b"\x7fELF":
+        return "linux"
+    if head[:2] == b"MZ":
+        return "windows"
+    macho = {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",      # 32/64-bit BE
+             b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",      # 32/64-bit LE
+             b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}      # fat
+    if head[:4] in macho:
+        return "macos"
+    if head[:2] == b"#!":
+        return "linux"
+    return ""
+
+
 def shebang_interpreter(p: Path) -> str:
     """Return the interpreter from a '#!' line, resolving '/usr/bin/env X' to X. '' if none."""
     try:
@@ -191,8 +215,9 @@ def find_programs(root: Path) -> list[Path]:
         if p.suffix.lower() in SKIP_SUFFIXES:
             continue
         st = p.stat()
-        runnable = bool(st.st_mode & stat.S_IXUSR) or _looks_elf(p) \
-            or bool(shebang_interpreter(p)) \
+        # detect_os covers ELF (linux), PE/.exe (windows), Mach-O (macos) and shebang scripts —
+        # including foreign binaries that arrive without a +x bit.
+        runnable = bool(st.st_mode & stat.S_IXUSR) or bool(detect_os(p)) \
             or (p.suffix == ".py" and _has_py_main(p))
         if runnable:
             out.append(p)

@@ -25,6 +25,22 @@ def exec_shim(bin_dir: Path, cmd: str, tool: str, target: Path, interpreter: Pat
     return _write(bin_dir / cmd, "".join(lines), tool)
 
 
+def path_shim(bin_dir: Path, cmd: str, tool: str, target: Path, os_label: str = "",
+              hint: bool = True) -> Path:
+    """Shim for a program meant to run on ANOTHER machine/OS: print its path, don't execute.
+
+    stdout = the absolute path (so `scp $(cmd) host:` works); a human hint goes to stderr.
+    """
+    target = target.resolve()
+    built = f"built for {os_label}" if os_label else "meant for another machine"
+    lines = ""
+    if hint:
+        msg = f"tm: '{cmd}' is {built}; copy it to the target host:"
+        lines = f">&2 printf '%s\\n' {shlex.quote(msg)}\n"
+    lines += f"printf '%s\\n' {shlex.quote(str(target))}\n"
+    return _write(bin_dir / cmd, lines, tool)
+
+
 def docker_shim(bin_dir: Path, cmd: str, tool: str, image: str, flags: list[str]) -> Path:
     # "$PWD" stays expandable at run time; every other flag is quoted literally
     rendered = " ".join(

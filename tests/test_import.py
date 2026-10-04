@@ -29,9 +29,15 @@ def _elf(p: Path):
 
 @pytest.fixture(autouse=True)
 def _no_agent(monkeypatch):
-    monkeypatch.setattr(core.agents, "describe_local",
-                        lambda cfg, items, vocab, log: TagBatch(
-                            items=[TagItem(name=items[0]["name"], description="desc", tags=["web"])]))
+    from tm.agents import ImportResult, EntryDecision
+
+    def fake(cfg, tool_name, help_head, entries, vocab, log=None):
+        return ImportResult(
+            description="desc", tags=["web"],
+            entrypoints=[EntryDecision(name=e["name"],
+                                       runs_locally=e["detected_os"] in ("", "linux"),
+                                       target_os=e["detected_os"]) for e in entries])
+    monkeypatch.setattr(core.agents, "classify_import", fake)
 
 
 # ---- find_programs / shebang

@@ -16,7 +16,7 @@ from tm import core, manifest, tags as tagmod
 from tm.registry import Registry
 from tm.util import InstallError, console, err
 
-app = typer.Typer(add_completion=False, help="tm — agent-assisted tool manager", no_args_is_help=True)
+app = typer.Typer(help="tm — agent-assisted tool manager", no_args_is_help=True)
 tags_app = typer.Typer(help="Edit tags for a tool")
 vocab_app = typer.Typer(help="Manage the tag vocabulary")
 app.add_typer(tags_app, name="tag")
@@ -27,6 +27,22 @@ def _cfg():
     cfg = cfgmod.load()
     cfgmod.ensure_layout(cfg)
     return cfg
+
+
+def _complete_tool(incomplete: str) -> list[str]:
+    """Shell completion for cataloged tool names. Must be fast and side-effect free."""
+    try:
+        cfg = cfgmod.load()  # no ensure_layout: completion must not create anything
+        names = []
+        if cfg.db_path.exists():
+            reg = Registry(cfg.db_path)
+            names = [r["name"] for r in reg.search()]
+            reg.close()
+        if not names:  # fallback: scan manifests
+            names = [m.name for _, m in manifest.iter_all(cfg.root)]
+        return [n for n in names if n.startswith(incomplete)]
+    except Exception:
+        return []
 
 
 def _die(msg: str):
@@ -135,7 +151,7 @@ def _print_rows(rows):
 
 
 @app.command()
-def info(name: str):
+def info(name: str = typer.Argument(..., autocompletion=_complete_tool)):
     """Show everything about one tool."""
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
@@ -151,7 +167,10 @@ def info(name: str):
     t.add_row("  user tags", ", ".join(m.tags_user) or "-")
     t.add_row("  removed", ", ".join(m.tags_removed) or "-")
     if m.entrypoints:
-        t.add_row("commands", "\n".join(f"{k} -> {v}" for k, v in m.entrypoints.items()))
+        def _annot(cmd):
+            os_ = m.entry_os.get(cmd, "")
+            return f"→ copy to {os_}" if m.is_foreign(cmd) else "run here"
+        t.add_row("commands", "\n".join(f"{k} -> {v}  [{_annot(k)}]" for k, v in m.entrypoints.items()))
     if m.method == "release_windows":
         t.add_row("windows files", str(d / "windows"))
     if m.docker_image:
@@ -165,7 +184,7 @@ def info(name: str):
 
 
 @app.command()
-def remove(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
+def remove(name: str = typer.Argument(..., autocompletion=_complete_tool), yes: bool = typer.Option(False, "--yes", "-y")):
     """Remove a tool: shims, directory and registry entry (apt packages are uninstalled)."""
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
@@ -190,7 +209,7 @@ def remove(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
 
 
 @app.command()
-def forget(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
+def forget(name: str = typer.Argument(..., autocompletion=_complete_tool), yes: bool = typer.Option(False, "--yes", "-y")):
     """Drop a tool from the catalog WITHOUT deleting it — files and shims stay, it keeps working."""
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
@@ -209,7 +228,7 @@ def forget(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
 
 
 @app.command()
-def update(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
+def update(name: str = typer.Argument(..., autocompletion=_complete_tool), yes: bool = typer.Option(False, "--yes", "-y")):
     """Update a tool (apt: upgrade; git-based: re-pull + re-run method)."""
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
@@ -261,7 +280,7 @@ def doctor(prune: bool = typer.Option(False, "--prune",
 
 
 @app.command()
-def edit(name: str):
+def edit(name: str = typer.Argument(..., autocompletion=_complete_tool)):
     """Open the tool's manifest.json in $EDITOR, then validate + reindex."""
     cfg = _cfg()
     d, _ = _load_tool(cfg, name)
@@ -276,7 +295,7 @@ def edit(name: str):
 
 
 @app.command()
-def retag(name: str = typer.Argument("", help="Tool name, or empty with --all"),
+def retag(name: str = typer.Argument("", help="Tool name, or empty with --all", autocompletion=_complete_tool),
           all_: bool = typer.Option(False, "--all", help="Retag every tool")):
     """Re-run auto-tagging (keeps user tags and removals)."""
     cfg = _cfg()
@@ -307,7 +326,7 @@ def retag(name: str = typer.Argument("", help="Tool name, or empty with --all"),
 # ---- `tm tag ...`
 
 @tags_app.command("add")
-def tag_add(name: str, tags: list[str]):
+def tag_add(name: str = typer.Argument(..., autocompletion=_complete_tool), tags: list[str] = typer.Argument(...)):
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
     m.add_user_tags(tags)
@@ -316,7 +335,7 @@ def tag_add(name: str, tags: list[str]):
 
 
 @tags_app.command("rm")
-def tag_rm(name: str, tags: list[str]):
+def tag_rm(name: str = typer.Argument(..., autocompletion=_complete_tool), tags: list[str] = typer.Argument(...)):
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
     m.remove_tags(tags)
@@ -325,7 +344,7 @@ def tag_rm(name: str, tags: list[str]):
 
 
 @tags_app.command("set")
-def tag_set(name: str, tags: list[str]):
+def tag_set(name: str = typer.Argument(..., autocompletion=_complete_tool), tags: list[str] = typer.Argument(...)):
     cfg = _cfg()
     d, m = _load_tool(cfg, name)
     m.set_tags(tags)

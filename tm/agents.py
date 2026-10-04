@@ -58,6 +58,19 @@ class TagBatch(BaseModel):
     new_tags: dict[str, str] = Field(default_factory=dict)
 
 
+class EntryDecision(BaseModel):
+    name: str
+    runs_locally: bool = True
+    target_os: str = ""  # linux | windows | macos | linux-other | ""
+
+
+class ImportResult(BaseModel):
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    entrypoints: list[EntryDecision] = Field(default_factory=list)
+    new_tags: dict[str, str] = Field(default_factory=dict)
+
+
 def _prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.md").read_text()
 
@@ -139,9 +152,17 @@ def tag_packages(cfg: Config, packages: list[dict], vocab: str, log: Logger | No
                       model=cfg.model("tagger"), log=log)
 
 
-def describe_local(cfg: Config, items: list[dict], vocab: str, log: Logger | None = None) -> TagBatch:
-    """Describe + tag locally-imported programs (input: name, file_type, help, files)."""
-    lines = [json.dumps(p, ensure_ascii=False) for p in items]
-    prompt = f"## Tag vocabulary\n{vocab}\n{_tag_rule(cfg)}\n## Programs (one JSON per line)\n" + "\n".join(lines)
-    return run_claude(cfg, prompt=prompt, system=_prompt("importer"), schema=TagBatch,
+def classify_import(cfg: Config, tool_name: str, help_head: str, entries: list[dict],
+                    vocab: str, log: Logger | None = None) -> ImportResult:
+    """Describe + tag an imported tool AND decide, per entrypoint, whether it runs on this
+    (Linux) machine or is built for another OS (→ its shim should just print the path).
+
+    entries: [{name, file_type (from `file -b`), detected_os}]. The agent uses both the binary
+    format and what the tool does. Host OS is Linux.
+    """
+    payload = {"tool": tool_name, "help": help_head, "entrypoints": entries}
+    prompt = (f"## Tag vocabulary\n{vocab}\n{_tag_rule(cfg)}\n"
+              "## Host\nThis machine runs Linux (x86_64).\n"
+              "## Tool\n" + json.dumps(payload, ensure_ascii=False))
+    return run_claude(cfg, prompt=prompt, system=_prompt("importer"), schema=ImportResult,
                       model=cfg.model("tagger"), log=log)

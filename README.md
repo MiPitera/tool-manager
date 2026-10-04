@@ -43,7 +43,12 @@ tm edit ffuf                    # manifest.json in $EDITOR
 tm tags list                    tm tags rename old new   tm tags merge a b
 tm update ffuf                  tm remove ffuf           tm reindex
 tm forget ffuf                  # drop from catalog but KEEP files + commands working
+
+tm --install-completion         # shell tab-completion (bash/zsh/fish): commands + tool names
 ```
+
+Tab-completion covers subcommands (`tm li<tab>` → `list`) and, for commands that take a tool
+name (`info/remove/forget/update/edit/retag`, `tag …`), the names of your cataloged tools.
 
 ## How it works
 
@@ -76,6 +81,13 @@ tm install <url>
 binaries, `+x` files, shebang scripts, `.py` with a main; override with `--entry`), shimmed with
 absolute paths, and described + tagged by the agent. `tm doctor` lists unmanaged binaries you can
 pull in this way.
+
+**Programs for another OS.** When a tool ships the same program built for several systems
+(e.g. `tool`, `tool.exe`, `tool-mac`), all builds are imported as separate commands. An agent
+decides — from each binary's format and what the tool does — which run on this Linux host and
+which are meant for another machine. Native builds get a normal exec shim; foreign ones get a
+shim that just **prints the binary's path** (and a hint on stderr) instead of trying to run it,
+so `scp "$(tool-exe)" target:` works. `tm info` marks each command `run here` or `→ copy to <os>`.
 
 ### apt — programs, not packages
 

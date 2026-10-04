@@ -21,9 +21,12 @@ def _seed_tool(root: Path, monkeypatch) -> Config:
                  agents={"extra_args": [], "target_tags": 3}, docker={})
     cfg.bin_dir.mkdir(parents=True, exist_ok=True)
     (root / "tags.txt").write_text("web: web stuff\n")
-    monkeypatch.setattr(core.agents, "describe_local",
-                        lambda c, items, vocab, log: TagBatch(
-                            items=[TagItem(name=items[0]["name"], description="d", tags=["web"])]))
+    from tm.agents import ImportResult, EntryDecision
+    monkeypatch.setattr(core.agents, "classify_import",
+                        lambda c, tool_name, help_head, entries, vocab, log=None: ImportResult(
+                            description="d", tags=["web"],
+                            entrypoints=[EntryDecision(name=e["name"], runs_locally=True,
+                                                       target_os="linux") for e in entries]))
     prog = root.parent / "prog"
     prog.write_text("#!/bin/sh\necho ok\n")
     prog.chmod(prog.stat().st_mode | stat.S_IXUSR)

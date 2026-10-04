@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,7 @@ class Manifest(BaseModel):
     platform: Literal["linux", "windows", "both"] = "linux"
     description: str = ""
     entrypoints: dict[str, str] = Field(default_factory=dict)  # command name -> absolute target
+    entry_os: dict[str, str] = Field(default_factory=dict)  # command -> target OS; linux/local = native
     tags_auto: list[str] = Field(default_factory=list)
     tags_user: list[str] = Field(default_factory=list)
     tags_removed: list[str] = Field(default_factory=list)
@@ -43,6 +44,16 @@ class Manifest(BaseModel):
     notes: str = ""
     installed_at: str = Field(default_factory=lambda: now())
     updated_at: str = Field(default_factory=lambda: now())
+
+    NATIVE_OS: ClassVar[set[str]] = {"", "linux", "local"}
+
+    @property
+    def foreign_commands(self) -> list[str]:
+        """Commands built for another OS — their shims print a path instead of running."""
+        return [c for c, os_ in self.entry_os.items() if os_ not in self.NATIVE_OS]
+
+    def is_foreign(self, cmd: str) -> bool:
+        return self.entry_os.get(cmd, "") not in self.NATIVE_OS
 
     @property
     def tags(self) -> list[str]:

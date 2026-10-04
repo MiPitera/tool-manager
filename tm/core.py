@@ -62,10 +62,11 @@ def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool =
 
     entrypoints = _run_method(cfg, name, tool_dir, url, ctx, cls, log)
 
+    entry_os = {c: "windows" for c in entrypoints} if cls.method == "release_windows" else {}
     m = Manifest(
         name=name, source=url, method=cls.method, language=cls.language,
         version=ctx.release_tag, platform=cls.platform, description=cls.description,
-        entrypoints=entrypoints, recommended_by_repo=cls.recommended_by_repo,
+        entrypoints=entrypoints, entry_os=entry_os, recommended_by_repo=cls.recommended_by_repo,
         deviation_reason=cls.deviation_reason, docker_image=cls.docker_image,
         apt_deps=cls.apt_deps,
     )
@@ -167,6 +168,8 @@ def _smoke_test(cfg: Config, m: Manifest, log: Logger) -> None:
     if m.method == "release_windows" or not m.entrypoints:
         return
     for cmd in m.entrypoints:
+        if m.is_foreign(cmd):  # foreign shims just print a path — nothing to smoke-test
+            continue
         shim = cfg.bin_dir / cmd
         if not shim.exists():
             continue
@@ -313,28 +316,61 @@ def import_local(cfg: Config, path: str, *, name: str = "", entry: str = "",
                            "projects that need building")
 
     chosen = _choose_entries(candidates, app, name, entry, assume_yes)
-    entrypoints: dict[str, str] = {}
+
+    # per-entrypoint facts for the agent + deterministic fallback (unique command names)
+    progs: dict[str, Path] = {}
+    entries_info = []
     for prog in chosen:
+        cmd = _unique_cmd(prog, name, progs)
+        progs[cmd] = prog
+        entries_info.append({"name": cmd, "file_type": _file_type(prog),
+                             "detected_os": archive.detect_os(prog)})
+
+    # agent decides description/tags + which entrypoints run locally vs are for another OS
+    description, tags_auto, decisions = _classify_import(cfg, name, progs, entries_info, app, log)
+
+    entrypoints: dict[str, str] = {}
+    entry_os: dict[str, str] = {}
+    for cmd, prog in progs.items():
         archive.make_executable(prog)
-        interp = archive.shebang_interpreter(prog)
-        cmd = _norm_name(prog.stem) or name
         shims.check_free(cfg.bin_dir, cmd, name)
-        interpreter = _resolve_interpreter(interp) if interp and not archive._looks_elf(prog) else None
-        shims.exec_shim(cfg.bin_dir, cmd, name, prog, interpreter=interpreter)
+        runs_locally, target_os = decisions[cmd]
+        if runs_locally:
+            interp = archive.shebang_interpreter(prog)
+            interpreter = _resolve_interpreter(interp) if interp and not archive._looks_elf(prog) else None
+            shims.exec_shim(cfg.bin_dir, cmd, name, prog, interpreter=interpreter)
+            entry_os[cmd] = target_os or "linux"
+        else:
+            shims.path_shim(cfg.bin_dir, cmd, name, prog, os_label=target_os)
+            entry_os[cmd] = target_os or "other"
         entrypoints[cmd] = str(prog.resolve())
 
-    language = _guess_language(chosen[0])
     m = Manifest(name=name, source=f"local:{src}", method="imported",
-                 language=language, entrypoints=entrypoints, description="")
-    _describe_imported(cfg, m, chosen, app, log)
+                 language=_guess_language(chosen[0]), entrypoints=entrypoints,
+                 entry_os=entry_os, platform=_platform_from(entry_os),
+                 description=description)
+    m.tags_auto = tags_auto
     if user_tags:
         m.add_user_tags(user_tags)
 
     _smoke_test(cfg, m, log)
     manifest.save(tool_dir, m)
     _index(cfg, m)
-    console.print(f"[green]✓ imported[/] {name} — commands: {', '.join(entrypoints)}")
+    foreign = m.foreign_commands
+    note = f" (prints path, run elsewhere: {', '.join(foreign)})" if foreign else ""
+    console.print(f"[green]✓ imported[/] {name} — commands: {', '.join(entrypoints)}{note}")
     return m
+
+
+def _platform_from(entry_os: dict[str, str]) -> str:
+    oses = {o for o in entry_os.values()}
+    has_linux = bool(oses & {"linux", "local", ""})
+    has_foreign = bool(oses - {"linux", "local", ""})
+    if has_linux and has_foreign:
+        return "both"
+    if has_foreign and not has_linux:
+        return "windows" if oses <= {"windows"} else "both"
+    return "linux"
 
 
 def _place(src: Path, dest: Path, copy: bool, log: Logger) -> None:
@@ -372,12 +408,32 @@ def _choose_entries(candidates: list[Path], app: Path, name: str, entry: str,
         raise InstallError(f"--entry '{entry}' not found among runnable files")
     if len(candidates) == 1:
         return candidates
-    for c in candidates:  # name match
+    # cross-OS builds of one tool (e.g. tool, tool.exe, tool-mac): keep one per OS
+    cross = _cross_os_builds(candidates, name)
+    if cross:
+        return cross
+    for c in candidates:  # same-OS: a single named program
         if c.stem == name or c.name == name:
             return [c]
     if assume_yes:
         return [candidates[0]]
     return _prompt_entries(candidates, app)
+
+
+def _cross_os_builds(candidates: list[Path], name: str) -> list[Path]:
+    """If the candidates are the same program built for several OSes, return one per OS.
+
+    Returns [] when they are not a cross-OS set (so normal single-entrypoint logic applies).
+    """
+    oses = {archive.detect_os(c) for c in candidates}
+    if not (oses - {"", "linux"}) or len(oses) < 2:
+        return []  # no foreign builds, or all one OS
+    picks: dict[str, Path] = {}
+    for c in sorted(candidates, key=lambda p: (len(p.parts), p.name)):
+        o = archive.detect_os(c)
+        if o not in picks or (c.stem == name and picks[o].stem != name):
+            picks[o] = c
+    return list(picks.values())
 
 
 def _prompt_entries(candidates: list[Path], app: Path) -> list[Path]:
@@ -391,6 +447,23 @@ def _prompt_entries(candidates: list[Path], app: Path) -> list[Path]:
         if tok.isdigit() and 1 <= int(tok) <= len(candidates):
             picks.append(candidates[int(tok) - 1])
     return picks or [candidates[0]]
+
+
+def _unique_cmd(prog: Path, fallback: str, taken: dict) -> str:
+    """A command name that doesn't collide — stem first, then full name, then a numeric suffix.
+
+    Lets a tool ship same-named builds for several OSes (foo + foo.exe -> foo, foo-exe).
+    """
+    base = _norm_name(prog.stem) or fallback
+    if base not in taken:
+        return base
+    alt = _norm_name(prog.name) or fallback
+    if alt not in taken:
+        return alt
+    i = 2
+    while f"{base}-{i}" in taken:
+        i += 1
+    return f"{base}-{i}"
 
 
 def _resolve_interpreter(interp: str) -> Path | None:
@@ -409,23 +482,50 @@ def _guess_language(prog: Path) -> str:
     return ""
 
 
-def _describe_imported(cfg: Config, m: Manifest, progs: list[Path], app: Path, log: Logger) -> None:
-    item = {
-        "name": m.name,
-        "file_type": _file_type(progs[0]),
-        "help": _help_head(cfg, m),
-        "files": [p.name for p in list(app.iterdir())[:30]],
-    }
+def _classify_import(cfg: Config, name: str, progs: dict[str, Path], entries_info: list[dict],
+                     app: Path, log: Logger):
+    """Ask the agent for description/tags + per-entrypoint run location.
+
+    Returns (description, tags_auto, {cmd: (runs_locally, target_os)}). Falls back to magic-byte
+    detection for any decision the agent omits or if the agent call fails.
+    """
+    help_head = _help_from_native(progs, entries_info)
     vocab = tagmod.vocab_text(cfg.tags_file)
+    description, tags_auto, decisions = "", [], {}
     try:
-        batch = agents.describe_local(cfg, [item], vocab, log)
-        if batch.items:
-            m.description = batch.items[0].description
-            m.tags_auto = tagmod.clean(batch.items[0].tags)
-        if batch.new_tags:
-            tagmod.add_to_vocab(cfg.tags_file, batch.new_tags)
+        res = agents.classify_import(cfg, name, help_head, entries_info, vocab, log)
+        description = res.description
+        tags_auto = tagmod.clean(res.tags)
+        if res.new_tags:
+            tagmod.add_to_vocab(cfg.tags_file, res.new_tags)
+        for d in res.entrypoints:
+            if d.name in progs:
+                decisions[d.name] = (d.runs_locally, d.target_os)
     except InstallError as e:
-        err.print(f"[yellow]tagging failed ({e}); imported without tags[/]")
+        err.print(f"[yellow]classify failed ({e}); deciding run location by file type[/]")
+    for info in entries_info:  # deterministic fallback for anything missing
+        decisions.setdefault(info["name"], (info["detected_os"] in ("", "linux"), info["detected_os"]))
+    return description, tags_auto, decisions
+
+
+def _help_from_native(progs: dict[str, Path], entries_info: list[dict]) -> str:
+    """--help output from a native (Linux/script) entrypoint; never run foreign binaries."""
+    native = [i["name"] for i in entries_info if i["detected_os"] in ("", "linux")]
+    for cmd in native:
+        prog = progs[cmd]
+        try:
+            archive.make_executable(prog)
+        except OSError:
+            continue
+        for flag in (["--help"], ["-h"]):
+            try:
+                p = subprocess.run([str(prog), *flag], capture_output=True, text=True, timeout=10)
+                text = (p.stdout or p.stderr).strip()
+                if text:
+                    return "\n".join(text.splitlines()[:8])
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return ""
 
 
 def _file_type(prog: Path) -> str:
@@ -434,19 +534,3 @@ def _file_type(prog: Path) -> str:
         return p.stdout.strip()[:200]
     except (OSError, subprocess.SubprocessError):
         return ""
-
-
-def _help_head(cfg: Config, m: Manifest) -> str:
-    for cmd in m.entrypoints:
-        shim = cfg.bin_dir / cmd
-        if not shim.exists():
-            continue
-        for flag in (["--help"], ["-h"]):
-            try:
-                p = subprocess.run([str(shim), *flag], capture_output=True, text=True, timeout=10)
-                text = (p.stdout or p.stderr).strip()
-                if text:
-                    return "\n".join(text.splitlines()[:8])
-            except (OSError, subprocess.SubprocessError):
-                pass
-    return ""

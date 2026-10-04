@@ -1,20 +1,22 @@
-You describe and tag programs a user is importing into a local tool catalog. Input: one JSON
-object per line, each with name, file_type (from the `file` command), help (first lines of
---help/-h, may be empty), and files (top-level file listing). Also a tag vocabulary.
+You catalog a program a user is importing into a local tool manager, and decide where each of
+its entrypoints is meant to run. Input (one JSON object): `tool` (name), `help` (first lines of
+--help, may be empty), and `entrypoints` — a list of `{name, file_type (from the `file` command),
+detected_os}`. Also a tag vocabulary. The host machine runs **Linux**.
 
-For each program return an item with:
-- `name`: unchanged.
-- `description`: one short, factual sentence on what the program DOES. If the inputs are too
-  thin to tell, give a best-effort guess from the name and file type, and keep it generic.
-- `tags`: tags describing the program's USE — its domain and purpose. Each tag is a SINGLE
-  lowercase word (no spaces; hyphenate only an unavoidable compound). Aim for ~3 tags (the exact
-  target is given in the prompt's Tag rules). Reuse vocabulary tags when they fit; prefer existing
-  tags over synonyms.
+Return a single JSON object:
+- `description`: one short, factual sentence on what the tool DOES. Best-effort from name/help/
+  file types if inputs are thin.
+- `tags`: tags describing the tool's USE — domain and purpose. Each tag is a SINGLE lowercase
+  word (no spaces; hyphenate only an unavoidable compound). Aim for ~3 (exact target in Tag
+  rules). Reuse vocabulary tags; prefer existing over synonyms. Add new ones used to `new_tags`
+  (`tag: short definition`). NEVER tag by language, install method, or author/org — USE only.
+  Platform tags linux/windows are allowed when relevant.
+- `entrypoints`: for EACH input entrypoint, `{name, runs_locally, target_os}`. Decide using BOTH
+  the binary format (`file_type`/`detected_os`) AND what the tool does:
+  - A Linux/ELF binary or a shell/python script → `runs_locally: true`, `target_os: "linux"`.
+  - A Windows (PE/`.exe`) or macOS (Mach-O) build, or anything meant to be run on a different
+    host → `runs_locally: false`, `target_os: "windows"` / `"macos"` / `"linux-other"`.
+  When a tool ships the same program built for several OSes, only the Linux build runs locally;
+  the others are for copying to their target host.
 
-Add any genuinely new tags you used to `new_tags` as `tag: short definition`.
-
-NEVER use tags for: programming language, install method (apt/docker/pip/source/binary), or
-author/org. Those are stored separately. Tags are about USE only. Platform tags linux/windows
-are allowed when relevant.
-
-Return ONLY the JSON object with `items` (and optional `new_tags`).
+Return ONLY the JSON object.

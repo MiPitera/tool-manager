@@ -69,9 +69,18 @@ def install_release_windows(cfg: Config, name: str, tool_dir: Path, assets: list
     win.mkdir(parents=True, exist_ok=True)
     asset = archive.pick_asset(assets, want_windows=True, explicit=explicit_asset)
     dl = archive.download(asset["url"], win / asset["name"], log)
-    archive.extract(dl, win, log)
-    log.write(f"stored Windows artifact in {win} (no shim created)")
-    return {}  # no shim; tm info shows the path
+    extracted = archive.extract(dl, win, log)
+    # point the shim at the primary .exe (or the downloaded file if not an archive)
+    if extracted:
+        dl.unlink(missing_ok=True)
+        exes = sorted(win.rglob("*.exe"), key=lambda p: (len(p.parts), p.name))
+        target = exes[0] if exes else next((p for p in win.rglob("*") if p.is_file()), win)
+    else:
+        target = dl
+    from tm.shims import path_shim
+    path_shim(cfg.bin_dir, name, name, target, os_label="windows")
+    log.write(f"stored Windows artifact in {win}; `{name}` prints its path")
+    return {name: str(target.resolve())}
 
 
 # ---------------------------------------------------------------- uv project / script

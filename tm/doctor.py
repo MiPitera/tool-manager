@@ -83,6 +83,8 @@ def _check_shims(cfg: Config) -> None:
                 continue
             if not (cfg.bin_dir / cmd).exists():
                 issues.append(f"shim {cmd} missing")
+            elif m.is_foreign(cmd):
+                continue  # foreign shim just prints a path; target not runnable here by design
             elif not Path(target).exists():
                 issues.append(f"target of {cmd} gone")
         status = "[green]ok[/]" if not issues else "[red]" + "; ".join(issues) + "[/]"
