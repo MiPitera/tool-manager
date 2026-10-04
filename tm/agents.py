@@ -35,6 +35,7 @@ class Classification(BaseModel):
     static_recommended: bool = False
     static_tool: str = ""  # pyinstaller | nuitka | ""
     static_entrypoints: list[str] = Field(default_factory=list)  # repo-relative scripts to build
+    static_extra_args: list[str] = Field(default_factory=list)  # extra packager flags from docs
     release_assets_by_os: dict[str, str] = Field(default_factory=dict)  # os -> asset name
     platform: Literal["linux", "windows", "both"] = "linux"
     description: str

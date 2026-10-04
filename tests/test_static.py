@@ -72,7 +72,7 @@ def test_static_install_builds_and_fetches(tmp_path, monkeypatch):
     monkeypatch.setattr(core.github, "gather", lambda u: Ctx())
 
     # mock the static builder to avoid real clone/pyinstaller/network
-    def fake_static(cfg_, name, tool_dir, url_, tool, entry_rel, release_assets, release_by_os, log):
+    def fake_static(cfg_, name, tool_dir, url_, tool, entry_rel, release_assets, release_by_os, log, extra_args=None):
         dist = tool_dir / "dist"; dist.mkdir(parents=True)
         lin = dist / "lazagne"; _exe(lin)
         rel = tool_dir / "release-windows"; rel.mkdir(parents=True)

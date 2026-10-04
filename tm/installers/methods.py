@@ -275,9 +275,17 @@ def _detect_build_entries(src: Path) -> list[Path]:
     return found
 
 
+def _top_packages(src: Path) -> list[str]:
+    """Top-level importable packages in the repo (dirs with __init__.py), for --collect-all."""
+    skip = {"tests", "test", "docs", "examples", "build"}
+    return [p.name for p in sorted(src.iterdir())
+            if p.is_dir() and (p / "__init__.py").exists() and p.name not in skip]
+
+
 def install_static(cfg: Config, name: str, tool_dir: Path, url: str, tool: str,
                    entry_rel: list[str], release_assets: list[dict],
-                   release_by_os: dict[str, str], log: Logger) -> dict[str, str]:
+                   release_by_os: dict[str, str], log: Logger,
+                   extra_args: list[str] | None = None) -> dict[str, str]:
     """Compile a standalone Linux binary (PyInstaller/Nuitka) and fetch prebuilt release
     binaries for other OSes. Returns {os_label: absolute_path} for every artifact."""
     tool = tool or "pyinstaller"
@@ -301,20 +309,34 @@ def install_static(cfg: Config, name: str, tool_dir: Path, url: str, tool: str,
     if not entries:
         raise InstallError("static build: could not find an entry script to compile")
 
+    extra_args = extra_args or []
     dist = tool_dir / "dist"
     dist.mkdir(parents=True, exist_ok=True)
     built: list[Path] = []
     for entry in entries:
         out_name = _norm(entry.stem) or name
+        # build from the entry's own directory so `--additional-hooks-dir=.` and a sibling
+        # package (e.g. Linux/lazagne/) resolve the way the repo's own command expects.
+        bcwd = entry.parent
+        # project may ship requirements next to the entry (per-OS dir)
+        if (bcwd / "requirements.txt").exists():
+            run(["uv", "pip", "install", "--python", str(py), "-r", str(bcwd / "requirements.txt")],
+                log=log, env=env, check=False)
+        packages = _top_packages(bcwd) or _top_packages(src)  # e.g. lazagne (+ its softwares.*)
+        log.write(f"static build: entry={entry} cwd={bcwd} packages={packages} extra_args={extra_args}")
         if tool == "nuitka":
+            collect = [f"--include-package={p}" for p in packages]
             run([str(py), "-m", "nuitka", "--onefile", "--assume-yes-for-downloads",
-                 f"--output-dir={dist}", f"--output-filename={out_name}", str(entry)],
-                log=log, cwd=src, env=env, timeout=1800)
+                 *collect, *extra_args, f"--output-dir={dist}",
+                 f"--output-filename={out_name}", entry.name],
+                log=log, cwd=bcwd, env=env, timeout=2400)
             cand = dist / out_name
         else:
+            collect = [a for p in packages for a in ("--collect-all", p)]
             run([str(venv / "bin" / "pyinstaller"), "--onefile", "--distpath", str(dist),
                  "--workpath", str(tool_dir / "build"), "--specpath", str(tool_dir / "build"),
-                 "--name", out_name, str(entry)], log=log, cwd=src, env=env, timeout=1800)
+                 *collect, *extra_args, "--name", out_name, entry.name],
+                log=log, cwd=bcwd, env=env, timeout=2400)
             cand = dist / out_name
         if cand.exists():
             archive.make_executable(cand)

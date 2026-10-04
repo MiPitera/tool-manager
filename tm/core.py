@@ -105,7 +105,8 @@ def _install_static(cfg, name, tool_dir, url, ctx, cls, tool, user_tags, assume_
     try:
         artifacts = methods.install_static(cfg, name, tool_dir, url, tool,
                                            cls.static_entrypoints, ctx.release_assets,
-                                           cls.release_assets_by_os, log)
+                                           cls.release_assets_by_os, log,
+                                           extra_args=cls.static_extra_args)
     except InstallError as e:
         console.print(f"[yellow]static build failed ({e}); escalating to the build agent…[/]")
         log.write(f"static build failed, escalating: {e}")

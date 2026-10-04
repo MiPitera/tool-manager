@@ -48,6 +48,12 @@ credential-harvester meant to run on a victim/target; releases ship prebuilt per
 - `static_tool`: "nuitka" if the docs specifically recommend Nuitka, else "pyinstaller".
 - `static_entrypoints`: repo-relative main script(s) to compile. Prefer the Linux variant when
   the repo has per-OS copies (e.g. "Linux/laZagne.py"). Best-effort; [] if unsure.
+- `static_extra_args`: extra packager flags from the repo's documented build command, which are
+  often REQUIRED for the binary to actually work (dynamic imports, data files). Copy flags like
+  `--additional-hooks-dir=.`, `--collect-submodules X`, `--collect-all X`, `--hidden-import X`,
+  `--include-package=X`, `--add-data ...`. EXCLUDE `-F`/`--onefile`/`--standalone`/`--name`/output
+  paths/the script path (we add those). E.g. LaZagne's
+  `pyinstaller --additional-hooks-dir=. -F --onefile laZagne.py` → `["--additional-hooks-dir=."]`.
 - `release_assets_by_os`: for a static/deploy tool, map OS → the prebuilt release asset name to
   download, e.g. {"windows": "lazagne.exe"}. Use the latest release's asset list given in context.
   Leave out OSes that have no suitable asset. (We build Linux ourselves; we do NOT cross-compile
