@@ -74,6 +74,39 @@ def pick_asset(assets: list[dict], want_windows: bool, explicit: str = "") -> di
     return ranked[0]
 
 
+def pick_asset_for_os(assets: list[dict], os_label: str, explicit: str = "") -> dict | None:
+    """Best release asset for a given OS (windows/macos/linux). None if nothing suitable."""
+    if explicit:
+        return next((a for a in assets if a["name"] == explicit), None)
+    if os_label == "windows":
+        ranked = sorted(assets, key=lambda a: score_asset(a["name"], want_windows=True), reverse=True)
+        best = ranked[0] if ranked else None
+        return best if best and score_asset(best["name"], want_windows=True) > 0 else None
+    if os_label == "linux":
+        try:
+            return pick_asset(assets, want_windows=False)
+        except InstallError:
+            return None
+    if os_label == "macos":
+        ranked = sorted(assets, key=lambda a: (("darwin" in a["name"].lower()
+                        or "macos" in a["name"].lower() or "osx" in a["name"].lower()),), reverse=True)
+        for a in ranked:
+            low = a["name"].lower()
+            if ("darwin" in low or "macos" in low or "osx" in low) and not low.endswith(BAD_EXT):
+                return a
+    return None
+
+
+def pick_assets_by_os(assets: list[dict], mapping: dict[str, str]) -> dict[str, dict]:
+    """Resolve {os -> asset name|''} to {os -> asset dict}, skipping OSes with no match."""
+    out: dict[str, dict] = {}
+    for os_label, explicit in (mapping or {}).items():
+        a = pick_asset_for_os(assets, os_label, explicit or "")
+        if a:
+            out[os_label] = a
+    return out
+
+
 def download(url: str, dest: Path, log: Logger) -> Path:
     log.write(f"download {url}")
     dest.parent.mkdir(parents=True, exist_ok=True)

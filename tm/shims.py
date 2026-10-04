@@ -41,6 +41,25 @@ def path_shim(bin_dir: Path, cmd: str, tool: str, target: Path, os_label: str = 
     return _write(bin_dir / cmd, lines, tool)
 
 
+def multipath_shim(bin_dir: Path, cmd: str, tool: str, artifacts: dict[str, str],
+                   hint: bool = True) -> Path:
+    """For a static/foreign tool with several build artifacts: print ALL their paths.
+
+    stdout = one absolute path per line (scriptable); stderr = an `os -> path` listing.
+    Never executes anything.
+    """
+    items = [(os_label, str(Path(p).resolve())) for os_label, p in artifacts.items()]
+    out = []
+    if hint:
+        header = "tm: '" + cmd + "' artifacts (copy to the target host):"
+        out.append(">&2 printf '%s\\n' " + shlex.quote(header))
+        for os_label, path in items:
+            out.append(">&2 printf '%s\\n' " + shlex.quote(f"  {os_label}: {path}"))
+    for _, path in items:
+        out.append("printf '%s\\n' " + shlex.quote(path))
+    return _write(bin_dir / cmd, "\n".join(out) + "\n", tool)
+
+
 def docker_shim(bin_dir: Path, cmd: str, tool: str, image: str, flags: list[str]) -> Path:
     # "$PWD" stays expandable at run time; every other flag is quoted literally
     rendered = " ".join(

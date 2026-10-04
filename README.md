@@ -27,6 +27,7 @@ tm install OWNER/REPO --docker                 # force docker; `repo args` inste
 tm install OWNER/REPO --method source_build    # force a path
 tm install --apt nmap                          # install + catalog an apt package
 tm install OWNER/REPO --tag web --tag recon    # add your own tags up front
+tm install OWNER/REPO --static                  # compile a standalone binary to deploy elsewhere
 
 tm import /path/to/binary --name tool          # import a local file  -> `tool`
 tm import /path/to/dir                          # dir contents = one tool (auto entrypoint)
@@ -102,6 +103,19 @@ on a package with no program warns and asks before cataloging (`--force` to skip
 either way the package stays installed on the system. `tm doctor` flags any already-cataloged
 apt entry that isn't a program, and `tm doctor --prune` drops those catalog entries (the
 packages themselves are left installed).
+
+### Standalone builds for other machines (`--static`)
+
+Some tools (agents, implants, credential harvesters like LaZagne) are meant to be compiled into a
+self-contained executable and dropped onto a **target host**, not run locally. `tm install <repo>
+--static` builds a standalone binary with **PyInstaller** (or **Nuitka** via `--static-tool
+nuitka`, or whichever the repo's docs recommend) and also downloads the prebuilt release binaries
+for other OSes (e.g. the Windows `.exe`). This is auto-detected too: when the repo's install docs
+recommend PyInstaller/Nuitka, the static path is taken without the flag.
+
+The tool becomes a single foreign command that **prints the paths to all artifacts** (Linux build
++ any downloaded Windows/macOS binaries), one per line on stdout, instead of running — so
+`scp "$(lazagne | tail -1)" target:` works. `tm info <name>` lists every artifact and its OS.
 
 ### sudo compatibility
 

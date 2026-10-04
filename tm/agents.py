@@ -32,6 +32,10 @@ class Classification(BaseModel):
     python_version: str = ""
     apt_deps: list[str] = Field(default_factory=list)
     docker_image: str = ""
+    static_recommended: bool = False
+    static_tool: str = ""  # pyinstaller | nuitka | ""
+    static_entrypoints: list[str] = Field(default_factory=list)  # repo-relative scripts to build
+    release_assets_by_os: dict[str, str] = Field(default_factory=dict)  # os -> asset name
     platform: Literal["linux", "windows", "both"] = "linux"
     description: str
     tags: list[str] = Field(default_factory=list)

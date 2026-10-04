@@ -12,7 +12,7 @@ from tm import tags as tagmod
 
 Method = Literal[
     "release_binary", "release_windows", "uv_project", "uv_script",
-    "go_install", "docker", "source_build", "apt", "imported",
+    "go_install", "docker", "source_build", "apt", "imported", "static",
 ]
 
 
@@ -32,6 +32,7 @@ class Manifest(BaseModel):
     description: str = ""
     entrypoints: dict[str, str] = Field(default_factory=dict)  # command name -> absolute target
     entry_os: dict[str, str] = Field(default_factory=dict)  # command -> target OS; linux/local = native
+    artifacts: dict[str, str] = Field(default_factory=dict)  # static builds: os_label -> abs path
     tags_auto: list[str] = Field(default_factory=list)
     tags_user: list[str] = Field(default_factory=list)
     tags_removed: list[str] = Field(default_factory=list)

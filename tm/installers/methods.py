@@ -107,16 +107,39 @@ def install_uv(cfg: Config, name: str, tool_dir: Path, url: str, is_script: bool
     elif (src / "requirements.txt").exists():
         run(["uv", "pip", "install", "--python", str(py), "-r", str(src / "requirements.txt")], log=log, env=env)
 
-    entries = _console_scripts(venv, entry_hint, name)
+    entries = _console_scripts(venv, entry_hint, name, src)
     if entries:
         return entries
-    if installed:
-        # fall back to a module entrypoint if the hint names one
-        pass
     return _uv_script_entry(cfg, name, src, py, entry_hint, env, log)
 
 
-def _console_scripts(venv: Path, hints: list[str], name: str) -> dict[str, str]:
+# console scripts that belong to common dependencies, never to the tool itself
+DEP_SCRIPTS = {
+    "cffi-gen-src", "pyinstaller", "pyi-archive_viewer", "pyi-bindepend",
+    "pyi-grab_version", "pyi-makespec", "pyi-set_version", "nuitka", "nuitka3",
+    "normalizer", "httpx", "dotenv", "tqdm", "markdown-it", "pygmentize",
+    "chardetect", "rst2html", "rst2html5", "wheel", "distro", "jsonschema",
+    "tabulate", "humanfriendly", "coloredlogs", "wsdump", "f2py", "isympy",
+    "docutils", "watchmedo", "ruff", "black", "isort", "flake8", "mypy", "pytest",
+}
+
+
+def _project_scripts(src: Path) -> set[str]:
+    """Console-script names declared by the project itself ([project.scripts] / entry_points)."""
+    names: set[str] = set()
+    pp = src / "pyproject.toml"
+    if pp.exists():
+        try:
+            data = tomllib.loads(pp.read_text())
+            names |= set((data.get("project", {}).get("scripts") or {}).keys())
+            poetry = data.get("tool", {}).get("poetry", {})
+            names |= set((poetry.get("scripts") or {}).keys())
+        except (tomllib.TOMLDecodeError, OSError):
+            pass
+    return names
+
+
+def _console_scripts(venv: Path, hints: list[str], name: str, src: Path | None = None) -> dict[str, str]:
     binp = venv / "bin"
     standard = {"python", "python3", "pip", "pip3", "activate", "activate.csh",
                 "activate.fish", "uv", "uvx"}
@@ -128,9 +151,18 @@ def _console_scripts(venv: Path, hints: list[str], name: str) -> dict[str, str]:
     wanted = [h for h in (hints or []) if h in scripts]
     if wanted:
         return {h: scripts[h] for h in wanted}
+    # prefer scripts the project declares for itself
+    declared = {s for s in _project_scripts(src) if s in scripts} if src else set()
+    if declared:
+        return {s: scripts[s] for s in declared}
     if name in scripts:
         return {name: scripts[name]}
-    return scripts
+    # drop known dependency scripts; if exactly one real candidate remains, use it
+    candidates = {k: v for k, v in scripts.items() if k not in DEP_SCRIPTS}
+    if len(candidates) == 1:
+        return candidates
+    # ambiguous and nothing declared → let the caller fall back to a script entrypoint
+    return {}
 
 
 def _uv_script_entry(cfg: Config, name: str, src: Path, py: Path, hints: list[str],
@@ -207,3 +239,97 @@ def make_shims(cfg: Config, name: str, entrypoints: dict[str, str]) -> None:
             if owner_tool(shim) == name:
                 continue
         exec_shim(cfg.bin_dir, cmd, name, tp)
+
+
+# ---------------------------------------------------------------- static (standalone build)
+
+def _detect_build_entries(src: Path) -> list[Path]:
+    """Python scripts that look like a program entry (argparse / __main__ / __name__==...)."""
+    roots = [src, src / "Linux", src / "linux", src / "src"]
+    found: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for p in sorted(root.glob("*.py")):
+            try:
+                txt = p.read_text(errors="ignore")
+            except OSError:
+                continue
+            if "__main__" in txt or "argparse" in txt or "sys.argv" in txt:
+                found.append(p)
+        if found:
+            break
+    return found
+
+
+def install_static(cfg: Config, name: str, tool_dir: Path, url: str, tool: str,
+                   entry_rel: list[str], release_assets: list[dict],
+                   release_by_os: dict[str, str], log: Logger) -> dict[str, str]:
+    """Compile a standalone Linux binary (PyInstaller/Nuitka) and fetch prebuilt release
+    binaries for other OSes. Returns {os_label: absolute_path} for every artifact."""
+    tool = tool or "pyinstaller"
+    src = tool_dir / "src"
+    clone(url, src, log)
+    venv = tool_dir / "venv"
+    env = _uv_env(cfg)
+    run(["uv", "venv", str(venv)], log=log, env=env)
+    py = venv / "bin" / "python"
+    # project deps
+    if (src / "pyproject.toml").exists() or (src / "setup.py").exists():
+        run(["uv", "pip", "install", "--python", str(py), "-e", str(src)], log=log, env=env, check=False)
+    if (src / "requirements.txt").exists():
+        run(["uv", "pip", "install", "--python", str(py), "-r", str(src / "requirements.txt")],
+            log=log, env=env, check=False)
+    run(["uv", "pip", "install", "--python", str(py), tool], log=log, env=env)
+
+    entries = [src / e for e in (entry_rel or []) if (src / e).exists()]
+    if not entries:
+        entries = _detect_build_entries(src)
+    if not entries:
+        raise InstallError("static build: could not find an entry script to compile")
+
+    dist = tool_dir / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    built: list[Path] = []
+    for entry in entries:
+        out_name = _norm(entry.stem) or name
+        if tool == "nuitka":
+            run([str(py), "-m", "nuitka", "--onefile", "--assume-yes-for-downloads",
+                 f"--output-dir={dist}", f"--output-filename={out_name}", str(entry)],
+                log=log, cwd=src, env=env, timeout=1800)
+            cand = dist / out_name
+        else:
+            run([str(venv / "bin" / "pyinstaller"), "--onefile", "--distpath", str(dist),
+                 "--workpath", str(tool_dir / "build"), "--specpath", str(tool_dir / "build"),
+                 "--name", out_name, str(entry)], log=log, cwd=src, env=env, timeout=1800)
+            cand = dist / out_name
+        if cand.exists():
+            archive.make_executable(cand)
+            built.append(cand)
+    if not built:
+        raise InstallError("static build produced no binary")
+
+    artifacts: dict[str, str] = {"linux": str(built[0].resolve())}
+    for i, b in enumerate(built[1:], 2):  # extra linux builds, if several entries
+        artifacts[f"linux-{i}"] = str(b.resolve())
+
+    # prebuilt release binaries for other OSes
+    for os_label, asset in archive.pick_assets_by_os(release_assets, release_by_os).items():
+        if os_label == "linux":
+            continue
+        dest_dir = tool_dir / f"release-{os_label}"
+        dl = archive.download(asset["url"], dest_dir / asset["name"], log)
+        extracted = archive.extract(dl, dest_dir, log)
+        if extracted:
+            dl.unlink(missing_ok=True)
+            exe = next((p for p in sorted(dest_dir.rglob("*")) if p.is_file()
+                        and (p.suffix.lower() == ".exe" or archive.detect_os(p) == os_label)), None)
+            artifacts[os_label] = str((exe or dest_dir).resolve())
+        else:
+            artifacts[os_label] = str(dl.resolve())
+    return artifacts
+
+
+def _norm(s: str) -> str:
+    import re
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", s).strip("-").lower()

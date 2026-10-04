@@ -28,6 +28,7 @@ def _norm_name(raw: str) -> str:
 
 def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool = False,
                         method: str = "", user_tags: list[str] | None = None,
+                        static: bool = False, static_tool: str = "",
                         assume_yes: bool = False) -> Manifest:
     name = name or _derive_name(url)
     tool_dir = cfg.tool_dir(name)
@@ -50,6 +51,13 @@ def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool =
         cls.method = "docker"
     elif method:
         cls.method = method  # type: ignore
+
+    # static standalone build: forced with --static, or auto-detected from the repo's docs,
+    # unless the user forced a different method explicitly.
+    go_static = (static or cls.static_recommended) and not method and not docker
+    if go_static:
+        return _install_static(cfg, name, tool_dir, url, ctx, cls,
+                               static_tool or cls.static_tool, user_tags, assume_yes, log)
 
     _show_plan(cls, name, url)
     if not confirm("Proceed with this plan?", assume_yes=assume_yes):
@@ -80,6 +88,53 @@ def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool =
     manifest.save(tool_dir, m)
     _index(cfg, m)
     console.print(f"[green]✓ installed[/] {name} — commands: {', '.join(m.entrypoints) or '(none, see tm info)'}")
+    return m
+
+
+def _install_static(cfg, name, tool_dir, url, ctx, cls, tool, user_tags, assume_yes, log) -> Manifest:
+    tool = tool or "pyinstaller"
+    console.print(f"[bold]Static build[/] with {tool} (standalone, for deploying to other hosts)")
+    _show_plan(cls, name, url)
+    if not confirm(f"Build a standalone binary with {tool} and fetch any prebuilt release "
+                   f"binaries for other OSes?", assume_yes=assume_yes):
+        raise InstallError("aborted by user")
+    if cls.apt_deps and confirm(f"Install build deps via apt: {', '.join(cls.apt_deps)}?",
+                                assume_yes=assume_yes):
+        for dep in cls.apt_deps:
+            apt.apt_install(dep, log, assume_yes=True)
+    try:
+        artifacts = methods.install_static(cfg, name, tool_dir, url, tool,
+                                           cls.static_entrypoints, ctx.release_assets,
+                                           cls.release_assets_by_os, log)
+    except InstallError as e:
+        console.print(f"[yellow]static build failed ({e}); escalating to the build agent…[/]")
+        log.write(f"static build failed, escalating: {e}")
+        cls.install_steps = cls.install_steps or [f"build a standalone binary with {tool} --onefile"]
+        ep = _source_build(cfg, name, tool_dir, url, ctx, cls, str(e), log)
+        artifacts = {"linux": next(iter(ep.values()))} if ep else {}
+        if not artifacts:
+            raise
+    cmd = name
+    shims.multipath_shim(cfg.bin_dir, cmd, name, artifacts)
+    oses = set(artifacts.keys())
+    platform = "both" if (oses - {"linux"} and "linux" in oses) else (
+        "windows" if oses == {"windows"} else "linux")
+    m = Manifest(
+        name=name, source=url, method="static", language=cls.language or "python",
+        version=ctx.release_tag, platform=platform, description=cls.description,
+        entrypoints={cmd: artifacts.get("linux", next(iter(artifacts.values())))},
+        entry_os={cmd: "linux-other"},  # foreign: the command prints paths, never runs
+        artifacts=artifacts, recommended_by_repo=cls.recommended_by_repo,
+    )
+    m.tags_auto = tagmod.clean(cls.tags)
+    if user_tags:
+        m.add_user_tags(user_tags)
+    if cls.new_tags:
+        tagmod.add_to_vocab(cfg.tags_file, cls.new_tags)
+    manifest.save(tool_dir, m)
+    _index(cfg, m)
+    console.print(f"[green]✓ built[/] {name} — `{cmd}` prints {len(artifacts)} artifact path(s): "
+                  f"{', '.join(artifacts)}")
     return m
 
 

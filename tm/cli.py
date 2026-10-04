@@ -72,6 +72,8 @@ def install(
     name: str = typer.Option("", "--name", help="Override the tool name"),
     method: str = typer.Option("", "--method", help="Force install method"),
     tag: list[str] = typer.Option([], "--tag", help="Add a user tag (repeatable)"),
+    static: bool = typer.Option(False, "--static", help="Compile to a standalone binary for deploying to other hosts"),
+    static_tool: str = typer.Option("", "--static-tool", help="Packager for --static: pyinstaller | nuitka"),
     force: bool = typer.Option(False, "--force", help="Catalog an apt package even if it ships no program"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes to prompts"),
 ):
@@ -83,7 +85,8 @@ def install(
             core.install_apt(cfg, pkg, user_tags=tag, assume_yes=yes, force=force)
         else:
             core.install_from_github(cfg, target, name=name, docker=docker, method=method,
-                                     user_tags=tag, assume_yes=yes)
+                                     user_tags=tag, static=static, static_tool=static_tool,
+                                     assume_yes=yes)
     except (InstallError, ValueError) as e:
         _die(str(e))
 
@@ -171,6 +174,8 @@ def info(name: str = typer.Argument(..., autocompletion=_complete_tool)):
             os_ = m.entry_os.get(cmd, "")
             return f"→ copy to {os_}" if m.is_foreign(cmd) else "run here"
         t.add_row("commands", "\n".join(f"{k} -> {v}  [{_annot(k)}]" for k, v in m.entrypoints.items()))
+    if m.artifacts:
+        t.add_row("artifacts", "\n".join(f"{os_} -> {p}" for os_, p in m.artifacts.items()))
     if m.method == "release_windows":
         t.add_row("windows files", str(d / "windows"))
     if m.docker_image:

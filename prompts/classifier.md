@@ -36,6 +36,23 @@ afterwards it runs as a single command. You do not run anything — you only ret
 - `platform`: linux | windows | both.
 - `description`: 1–2 sentences on WHAT THE TOOL DOES. May mention origin. Plain, factual.
 
+## Static / standalone build (tools deployed to OTHER machines)
+
+Some tools are meant to be compiled into a self-contained executable and dropped onto a target
+host (often a different OS) rather than run locally. Signs: the install docs tell you to build a
+standalone binary with **PyInstaller** or **Nuitka**; the tool is an agent/implant/payload/
+credential-harvester meant to run on a victim/target; releases ship prebuilt per-OS binaries.
+
+- `static_recommended`: true when the docs recommend building a standalone exe (PyInstaller/
+  Nuitka) OR the tool is clearly meant to be deployed to another host.
+- `static_tool`: "nuitka" if the docs specifically recommend Nuitka, else "pyinstaller".
+- `static_entrypoints`: repo-relative main script(s) to compile. Prefer the Linux variant when
+  the repo has per-OS copies (e.g. "Linux/laZagne.py"). Best-effort; [] if unsure.
+- `release_assets_by_os`: for a static/deploy tool, map OS → the prebuilt release asset name to
+  download, e.g. {"windows": "lazagne.exe"}. Use the latest release's asset list given in context.
+  Leave out OSes that have no suitable asset. (We build Linux ourselves; we do NOT cross-compile
+  Windows/macOS — only download those.)
+
 ## Tags (critical rules)
 
 Tags describe the tool's USE — what problem it solves, what domain, target platform
