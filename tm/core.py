@@ -9,7 +9,7 @@ from pathlib import Path
 from rich.panel import Panel
 from rich.table import Table
 
-from tm import agents, github, manifest, shims, tags as tagmod
+from tm import agents, github, manifest, naming, shims, tags as tagmod
 from tm.config import Config
 from tm.installers import apt, archive, methods
 from tm.manifest import Manifest
@@ -531,7 +531,7 @@ def _unique_cmd(prog: Path, fallback: str, taken: dict) -> str:
 
     Lets a tool ship same-named builds for several OSes (foo + foo.exe -> foo, foo-exe).
     """
-    base = _norm_name(prog.stem) or fallback
+    base = naming.command_name(prog.stem, fallback)  # generic stems (main/run/app) -> tool name
     if base not in taken:
         return base
     alt = _norm_name(prog.name) or fallback

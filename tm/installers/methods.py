@@ -6,6 +6,7 @@ import shutil
 import tomllib
 from pathlib import Path
 
+from tm import naming
 from tm.config import Config
 from tm.installers import archive
 from tm.shims import docker_shim, exec_shim
@@ -212,7 +213,7 @@ def install_go(cfg: Config, name: str, tool_dir: Path, url: str, go_package: str
     if not exes:
         raise InstallError("go install produced no binary")
     target = _pick_entry(exes, name, entry_hint)
-    cmd = (entry_hint[0] if entry_hint else "") or target.name
+    cmd = entry_hint[0] if entry_hint else naming.command_name(target.name, name)
     return {cmd: str(target.resolve())}
 
 
@@ -314,7 +315,7 @@ def install_static(cfg: Config, name: str, tool_dir: Path, url: str, tool: str,
     dist.mkdir(parents=True, exist_ok=True)
     built: list[Path] = []
     for entry in entries:
-        out_name = _norm(entry.stem) or name
+        out_name = naming.command_name(entry.stem, name)  # main.py -> tool name, not "main"
         # build from the entry's own directory so `--additional-hooks-dir=.` and a sibling
         # package (e.g. Linux/lazagne/) resolve the way the repo's own command expects.
         bcwd = entry.parent

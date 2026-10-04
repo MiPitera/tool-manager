@@ -174,3 +174,22 @@ def test_import_in_place_no_runnable_keeps_dir(tmp_path):
         core.import_local(cfg, str(tool_dir), assume_yes=True)
     assert tool_dir.exists()                       # not deleted
     assert (tool_dir / "app" / "notes.txt").exists()  # contents preserved under app/
+
+
+def test_naming_generic_falls_back():
+    from tm import naming
+    assert naming.command_name("main", "lazagne") == "lazagne"      # callers pass the stem
+    assert naming.command_name("run", "mytool") == "mytool"
+    assert naming.command_name("__main__", "mytool") == "mytool"
+    assert naming.command_name("ffuf", "ffuf-repo") == "ffuf"       # real name kept
+    assert naming.command_name("", "fallback") == "fallback"
+
+
+def test_import_main_py_uses_tool_name(tmp_path):
+    """A program whose entry is main.py should get the tool name as its command, not 'main'."""
+    cfg = _cfg(tmp_path / "root")
+    d = tmp_path / "cooltool"; d.mkdir()
+    s = d / "main.py"
+    s.write_text("#!/usr/bin/env python3\nif __name__=='__main__':\n print('hi')\n")
+    m = core.import_local(cfg, str(d), name="cooltool", assume_yes=True)
+    assert "cooltool" in m.entrypoints and "main" not in m.entrypoints
