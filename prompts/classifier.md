@@ -44,6 +44,8 @@ instead of inventing synonyms. Only add entries to `new_tags` (tag: short defini
 existing tag fits.
 
 NEVER use tags for: programming language, install method (apt/docker/pip/source/binary),
-Debian section, author or org name. Those are stored elsewhere. 2–6 tags is typical.
+Debian section, author or org name. Those are stored elsewhere. Each tag is a SINGLE lowercase
+word (no spaces; hyphenate only an unavoidable compound); aim for ~3 tags (exact target in the
+prompt's Tag rules).
 
 Return ONLY the JSON object matching the schema.

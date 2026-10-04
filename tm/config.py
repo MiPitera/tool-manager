@@ -20,6 +20,8 @@ tagger = "haiku"
 
 [agents]
 builder_max_turns = 40
+# how many tags the tagger should aim for per tool (tags are single words)
+target_tags = 3
 # extra flags passed to every `claude -p` call
 extra_args = ["--strict-mcp-config", "--no-session-persistence"]
 

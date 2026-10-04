@@ -105,8 +105,14 @@ def run_claude(cfg: Config, *, prompt: str, system: str, schema: type[BaseModel]
     raise InstallError(f"agent failed after {retries + 1} attempts: {last_err}")
 
 
+def _tag_rule(cfg: Config) -> str:
+    n = cfg.agents.get("target_tags", 3)
+    return (f"\n## Tag rules\nEvery tag is a SINGLE lowercase word (no spaces; hyphenate only an "
+            f"unavoidable compound). Aim for about {n} tags per item.\n")
+
+
 def classify(cfg: Config, repo_context: str, vocab: str, hint: str, log: Logger) -> Classification:
-    prompt = f"{repo_context}\n\n## Tag vocabulary\n{vocab}\n"
+    prompt = f"{repo_context}\n\n## Tag vocabulary\n{vocab}\n{_tag_rule(cfg)}"
     if hint:
         prompt += f"\n## User constraint\n{hint}\n"
     return run_claude(cfg, prompt=prompt, system=_prompt("classifier"), schema=Classification,
@@ -128,7 +134,7 @@ def build(cfg: Config, src_dir: Path, tool_dir: Path, steps: list[str], context:
 
 def tag_packages(cfg: Config, packages: list[dict], vocab: str, log: Logger | None = None) -> TagBatch:
     lines = [json.dumps(p, ensure_ascii=False) for p in packages]
-    prompt = f"## Tag vocabulary\n{vocab}\n\n## Packages (one JSON per line)\n" + "\n".join(lines)
+    prompt = f"## Tag vocabulary\n{vocab}\n{_tag_rule(cfg)}\n## Packages (one JSON per line)\n" + "\n".join(lines)
     return run_claude(cfg, prompt=prompt, system=_prompt("tagger"), schema=TagBatch,
                       model=cfg.model("tagger"), log=log)
 
@@ -136,6 +142,6 @@ def tag_packages(cfg: Config, packages: list[dict], vocab: str, log: Logger | No
 def describe_local(cfg: Config, items: list[dict], vocab: str, log: Logger | None = None) -> TagBatch:
     """Describe + tag locally-imported programs (input: name, file_type, help, files)."""
     lines = [json.dumps(p, ensure_ascii=False) for p in items]
-    prompt = f"## Tag vocabulary\n{vocab}\n\n## Programs (one JSON per line)\n" + "\n".join(lines)
+    prompt = f"## Tag vocabulary\n{vocab}\n{_tag_rule(cfg)}\n## Programs (one JSON per line)\n" + "\n".join(lines)
     return run_claude(cfg, prompt=prompt, system=_prompt("importer"), schema=TagBatch,
                       model=cfg.model("tagger"), log=log)

@@ -41,6 +41,7 @@ tm tag add ffuf web             tm tag rm ffuf dns       tm tag set ffuf web fuz
 tm edit ffuf                    # manifest.json in $EDITOR
 tm tags list                    tm tags rename old new   tm tags merge a b
 tm update ffuf                  tm remove ffuf           tm reindex
+tm forget ffuf                  # drop from catalog but KEEP files + commands working
 ```
 
 ## How it works
@@ -85,7 +86,13 @@ Shims are `/bin/sh` scripts with **absolute paths only**, so they work identical
 
 Tags describe **what a tool is for** (`recon`, `web`, `ad`, `windows`, …) — never its
 language, install method or source (those are manifest fields, filter with `--method`).
-Auto-tagged by the agent from a curated vocabulary (`~/tools/tags.txt`); fully editable.
+Each tag is a **single lowercase word**; the tagger aims for ~3 per tool (configurable via
+`[agents] target_tags`). Auto-tagged by the agent from a curated vocabulary (`~/tools/tags.txt`);
+fully editable.
+
+`tm remove` deletes a tool entirely (apt packages are uninstalled); `tm forget` only drops it
+from the catalog — the files stay in `~/tools/<name>/` and the commands stay on PATH, so it keeps
+working, it's just no longer tracked (and `tm reindex` won't bring it back).
 
 ### Config (`~/tools/config.toml`)
 

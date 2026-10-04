@@ -5,8 +5,10 @@ For each package return an item with:
 - `name`: the package name, unchanged.
 - `description`: one short, factual sentence on what the package DOES (rewrite the Debian
   description to be concise; drop boilerplate).
-- `tags`: 1–5 tags describing the package's USE — its domain and purpose. Reuse vocabulary tags
-  when they fit; prefer existing tags over synonyms.
+- `tags`: tags describing the package's USE — its domain and purpose. Each tag is a SINGLE
+  lowercase word (no spaces; hyphenate only an unavoidable compound). Aim for ~3 tags (the exact
+  target is given in the prompt's Tag rules). Reuse vocabulary tags when they fit; prefer existing
+  tags over synonyms.
 
 Add any genuinely new tags you used to `new_tags` as `tag: short definition`.
 

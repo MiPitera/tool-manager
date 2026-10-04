@@ -189,6 +189,25 @@ def remove(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
 
 
 @app.command()
+def forget(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
+    """Drop a tool from the catalog WITHOUT deleting it — files and shims stay, it keeps working."""
+    cfg = _cfg()
+    d, m = _load_tool(cfg, name)
+    from tm.util import confirm
+    if not confirm(f"Forget {name} (keep files + commands, stop tracking)?", assume_yes=yes):
+        raise typer.Exit()
+    mf = manifest.path_for(d)
+    if mf.exists():
+        mf.unlink()
+    reg = Registry(cfg.db_path)
+    reg.delete(name)
+    reg.close()
+    still = ", ".join(m.entrypoints) or "none"
+    console.print(f"[green]✓ forgot[/] {name} — no longer cataloged; commands still on PATH: {still}\n"
+                  f"[dim]files remain in {d} (and {cfg.bin_dir} shims). `tm reindex` won't re-add it.[/]")
+
+
+@app.command()
 def update(name: str, yes: bool = typer.Option(False, "--yes", "-y")):
     """Update a tool (apt: upgrade; git-based: re-pull + re-run method)."""
     cfg = _cfg()
