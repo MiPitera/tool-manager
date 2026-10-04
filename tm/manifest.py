@@ -12,7 +12,7 @@ from tm import tags as tagmod
 
 Method = Literal[
     "release_binary", "release_windows", "uv_project", "uv_script",
-    "go_install", "docker", "source_build", "apt",
+    "go_install", "docker", "source_build", "apt", "imported",
 ]
 
 

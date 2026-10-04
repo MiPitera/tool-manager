@@ -9,9 +9,9 @@ from pathlib import Path
 from rich.panel import Panel
 from rich.table import Table
 
-from tm import agents, github, manifest, tags as tagmod
+from tm import agents, github, manifest, shims, tags as tagmod
 from tm.config import Config
-from tm.installers import apt, methods
+from tm.installers import apt, archive, methods
 from tm.manifest import Manifest
 from tm.registry import Registry
 from tm.util import InstallError, Logger, confirm, console, err
@@ -19,7 +19,11 @@ from tm.util import InstallError, Logger, confirm, console, err
 
 def _derive_name(url: str) -> str:
     _, repo = github.parse_url(url)
-    return re.sub(r"[^a-zA-Z0-9_-]", "-", repo).strip("-").lower()
+    return _norm_name(repo)
+
+
+def _norm_name(raw: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", raw).strip("-").lower()
 
 
 def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool = False,
@@ -265,3 +269,174 @@ def import_apt(cfg: Config, batch_size: int = 30, assume_yes: bool = False) -> i
         reg.close()
     console.print(f"[green]✓ cataloged {count} apt packages[/]")
     return count
+
+
+# ---------------------------------------------------------------- local import
+
+def import_local(cfg: Config, path: str, *, name: str = "", entry: str = "",
+                 user_tags: list[str] | None = None, copy: bool = False,
+                 assume_yes: bool = False) -> Manifest:
+    src = Path(path).expanduser()
+    if not src.exists():
+        raise InstallError(f"path does not exist: {src}")
+    src = src.resolve()
+    name = name or _norm_name(src.stem if src.is_file() else src.name)
+    if not name:
+        raise InstallError("could not derive a name; pass --name")
+    tool_dir = cfg.tool_dir(name)
+    if tool_dir.exists() and any(tool_dir.iterdir()):
+        raise InstallError(f"'{name}' already exists ({tool_dir}); use `tm remove {name}` or --name")
+    log = Logger(tool_dir / "install.log")
+
+    app = tool_dir / "app"
+    app.mkdir(parents=True, exist_ok=True)
+    if src.is_file():
+        dest = app / src.name
+        _place(src, dest, copy, log)
+        candidates = [dest]
+    else:
+        _place_dir(src, app, copy, log)
+        candidates = archive.find_programs(app)
+    if not candidates:
+        shutil.rmtree(tool_dir, ignore_errors=True)
+        raise InstallError("no runnable file found; pass --entry, or use `tm install` for "
+                           "projects that need building")
+
+    chosen = _choose_entries(candidates, app, name, entry, assume_yes)
+    entrypoints: dict[str, str] = {}
+    for prog in chosen:
+        archive.make_executable(prog)
+        interp = archive.shebang_interpreter(prog)
+        cmd = _norm_name(prog.stem) or name
+        shims.check_free(cfg.bin_dir, cmd, name)
+        interpreter = _resolve_interpreter(interp) if interp and not archive._looks_elf(prog) else None
+        shims.exec_shim(cfg.bin_dir, cmd, name, prog, interpreter=interpreter)
+        entrypoints[cmd] = str(prog.resolve())
+
+    language = _guess_language(chosen[0])
+    m = Manifest(name=name, source=f"local:{src}", method="imported",
+                 language=language, entrypoints=entrypoints, description="")
+    _describe_imported(cfg, m, chosen, app, log)
+    if user_tags:
+        m.add_user_tags(user_tags)
+
+    _smoke_test(cfg, m, log)
+    manifest.save(tool_dir, m)
+    _index(cfg, m)
+    console.print(f"[green]✓ imported[/] {name} — commands: {', '.join(entrypoints)}")
+    return m
+
+
+def _place(src: Path, dest: Path, copy: bool, log: Logger) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if copy:
+        shutil.copy2(src, dest)
+        log.write(f"copied {src} -> {dest}")
+    else:
+        shutil.move(str(src), str(dest))
+        log.write(f"moved {src} -> {dest}")
+
+
+def _place_dir(src: Path, app: Path, copy: bool, log: Logger) -> None:
+    if copy:
+        shutil.copytree(src, app, dirs_exist_ok=True, symlinks=True)
+        log.write(f"copied dir {src} -> {app}")
+        return
+    try:
+        for child in list(src.iterdir()):
+            shutil.move(str(child), str(app / child.name))
+        log.write(f"moved contents of {src} -> {app}")
+    except OSError as e:  # cross-device or similar
+        log.write(f"move failed ({e}); falling back to copy")
+        shutil.copytree(src, app, dirs_exist_ok=True, symlinks=True)
+        shutil.rmtree(src, ignore_errors=True)
+
+
+def _choose_entries(candidates: list[Path], app: Path, name: str, entry: str,
+                    assume_yes: bool) -> list[Path]:
+    if entry:
+        want = (app / entry).resolve()
+        for c in candidates:
+            if c.resolve() == want or c.name == entry or c.stem == entry:
+                return [c]
+        raise InstallError(f"--entry '{entry}' not found among runnable files")
+    if len(candidates) == 1:
+        return candidates
+    for c in candidates:  # name match
+        if c.stem == name or c.name == name:
+            return [c]
+    if assume_yes:
+        return [candidates[0]]
+    return _prompt_entries(candidates, app)
+
+
+def _prompt_entries(candidates: list[Path], app: Path) -> list[Path]:
+    from rich.prompt import Prompt
+    console.print("[bold]Multiple runnable files found:[/]")
+    for i, c in enumerate(candidates, 1):
+        console.print(f"  {i}. {c.relative_to(app)}")
+    raw = Prompt.ask("Pick entrypoint number(s), comma-separated", default="1")
+    picks = []
+    for tok in raw.replace(" ", "").split(","):
+        if tok.isdigit() and 1 <= int(tok) <= len(candidates):
+            picks.append(candidates[int(tok) - 1])
+    return picks or [candidates[0]]
+
+
+def _resolve_interpreter(interp: str) -> Path | None:
+    p = shutil.which(interp)
+    return Path(p) if p else Path(interp)
+
+
+def _guess_language(prog: Path) -> str:
+    if archive._looks_elf(prog):
+        return ""
+    interp = archive.shebang_interpreter(prog)
+    if prog.suffix == ".py" or "python" in interp:
+        return "python"
+    if interp:
+        return Path(interp).name
+    return ""
+
+
+def _describe_imported(cfg: Config, m: Manifest, progs: list[Path], app: Path, log: Logger) -> None:
+    item = {
+        "name": m.name,
+        "file_type": _file_type(progs[0]),
+        "help": _help_head(cfg, m),
+        "files": [p.name for p in list(app.iterdir())[:30]],
+    }
+    vocab = tagmod.vocab_text(cfg.tags_file)
+    try:
+        batch = agents.describe_local(cfg, [item], vocab, log)
+        if batch.items:
+            m.description = batch.items[0].description
+            m.tags_auto = tagmod.clean(batch.items[0].tags)
+        if batch.new_tags:
+            tagmod.add_to_vocab(cfg.tags_file, batch.new_tags)
+    except InstallError as e:
+        err.print(f"[yellow]tagging failed ({e}); imported without tags[/]")
+
+
+def _file_type(prog: Path) -> str:
+    try:
+        p = subprocess.run(["file", "-b", str(prog)], capture_output=True, text=True, timeout=10)
+        return p.stdout.strip()[:200]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _help_head(cfg: Config, m: Manifest) -> str:
+    for cmd in m.entrypoints:
+        shim = cfg.bin_dir / cmd
+        if not shim.exists():
+            continue
+        for flag in (["--help"], ["-h"]):
+            try:
+                p = subprocess.run([str(shim), *flag], capture_output=True, text=True, timeout=10)
+                text = (p.stdout or p.stderr).strip()
+                if text:
+                    return "\n".join(text.splitlines()[:8])
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return ""

@@ -78,7 +78,8 @@ def _find_orphans(cfg: Config) -> None:
                     and not shims.is_managed(p):
                 found.append(str(p))
     if found:
-        console.print(f"\n[bold]Unmanaged binaries[/] ({len(found)}) — consider re-installing via tm:")
+        console.print(f"\n[bold]Unmanaged binaries[/] ({len(found)}) — pull in with "
+                      "[cyan]tm import <path>[/] (or re-install via tm):")
         for f in found[:40]:
             console.print(f"  {f}")
         if len(found) > 40:

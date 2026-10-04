@@ -71,6 +71,23 @@ def install(
         _die(str(e))
 
 
+@app.command("import")
+def import_local(
+    path: str = typer.Argument(..., help="Directory (its contents = one tool) or a file (one program)"),
+    name: str = typer.Option("", "--name", help="Override the tool name"),
+    entry: str = typer.Option("", "--entry", help="Entrypoint file when ambiguous (rel path or basename)"),
+    tag: list[str] = typer.Option([], "--tag", help="Add a user tag (repeatable)"),
+    copy: bool = typer.Option(False, "--copy", help="Copy instead of moving into ~/tools"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes to prompts"),
+):
+    """Import a local program (directory or file) into tm: move to ~/tools, shim, tag."""
+    cfg = _cfg()
+    try:
+        core.import_local(cfg, path, name=name, entry=entry, user_tags=tag, copy=copy, assume_yes=yes)
+    except (InstallError, ValueError) as e:
+        _die(str(e))
+
+
 @app.command("import-apt")
 def import_apt(yes: bool = typer.Option(False, "--yes", "-y"), batch: int = typer.Option(30, "--batch")):
     """Catalog and auto-tag manually-installed apt packages already on the system."""

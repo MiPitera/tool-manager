@@ -28,6 +28,10 @@ tm install OWNER/REPO --method source_build    # force a path
 tm install --apt nmap                          # install + catalog an apt package
 tm install OWNER/REPO --tag web --tag recon    # add your own tags up front
 
+tm import /path/to/binary --name tool          # import a local file  -> `tool`
+tm import /path/to/dir                          # dir contents = one tool (auto entrypoint)
+tm import /path/to/dir --entry bin/app --copy  # pick entrypoint, keep the original
+
 tm list                          tm list --method apt
 tm search kerberos               tm search --tag windows --tag ad
 tm info ffuf                     tm doctor          # health + find your old scattered binaries
@@ -60,7 +64,16 @@ tm install <url>
 - Code: `~/tool-manager/` (this repo).
 - Data: `~/tools/` — `config.toml`, `registry.db`, `tags.txt`, `bin/` (shims on PATH),
   `.python/` (uv interpreters, visible to root), and one dir per tool holding
-  `manifest.json` + sources/venv/binaries + `install.log`.
+  `manifest.json` + sources/venv/binaries (`app/` for imported tools) + `install.log`.
+
+### Importing local programs
+
+`tm import <path>` catalogs something already on disk. A **file** is imported as one program; a
+**directory**'s contents are treated as a single tool (no recursion). The target is moved into
+`~/tools/<name>/app/` (use `--copy` to keep the original), the entrypoint is auto-detected (ELF
+binaries, `+x` files, shebang scripts, `.py` with a main; override with `--entry`), shimmed with
+absolute paths, and described + tagged by the agent. `tm doctor` lists unmanaged binaries you can
+pull in this way.
 
 ### sudo compatibility
 

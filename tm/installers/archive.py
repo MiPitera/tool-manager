@@ -150,5 +150,55 @@ def _looks_elf(p: Path) -> bool:
         return False
 
 
+SKIP_SUFFIXES = {".so", ".dll", ".dylib", ".a", ".o", ".txt", ".md", ".json",
+                 ".yml", ".yaml", ".cfg", ".ini", ".toml", ".lock", ".log",
+                 ".png", ".jpg", ".gif", ".svg", ".csv", ".html"}
+
+
+def shebang_interpreter(p: Path) -> str:
+    """Return the interpreter from a '#!' line, resolving '/usr/bin/env X' to X. '' if none."""
+    try:
+        with p.open("rb") as f:
+            first = f.readline(256)
+    except OSError:
+        return ""
+    if not first.startswith(b"#!"):
+        return ""
+    parts = first[2:].decode("utf-8", "replace").strip().split()
+    if not parts:
+        return ""
+    if parts[0].endswith("/env") and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
+def _has_py_main(p: Path) -> bool:
+    try:
+        return '__main__' in p.read_text(errors="ignore")
+    except OSError:
+        return False
+
+
+def find_programs(root: Path) -> list[Path]:
+    """Runnable files: ELF, +x bit, shebang scripts (even without +x), or .py with a main.
+
+    Superset of find_executables used by `tm import`; libraries/data are skipped.
+    """
+    out: list[Path] = []
+    for p in root.rglob("*"):
+        if not p.is_file() or p.is_symlink():
+            continue
+        if p.suffix.lower() in SKIP_SUFFIXES:
+            continue
+        st = p.stat()
+        runnable = bool(st.st_mode & stat.S_IXUSR) or _looks_elf(p) \
+            or bool(shebang_interpreter(p)) \
+            or (p.suffix == ".py" and _has_py_main(p))
+        if runnable:
+            out.append(p)
+    out.sort(key=lambda p: (len(p.parts), p.name))
+    return out
+
+
 def make_executable(p: Path) -> None:
     p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

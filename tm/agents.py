@@ -131,3 +131,11 @@ def tag_packages(cfg: Config, packages: list[dict], vocab: str, log: Logger | No
     prompt = f"## Tag vocabulary\n{vocab}\n\n## Packages (one JSON per line)\n" + "\n".join(lines)
     return run_claude(cfg, prompt=prompt, system=_prompt("tagger"), schema=TagBatch,
                       model=cfg.model("tagger"), log=log)
+
+
+def describe_local(cfg: Config, items: list[dict], vocab: str, log: Logger | None = None) -> TagBatch:
+    """Describe + tag locally-imported programs (input: name, file_type, help, files)."""
+    lines = [json.dumps(p, ensure_ascii=False) for p in items]
+    prompt = f"## Tag vocabulary\n{vocab}\n\n## Programs (one JSON per line)\n" + "\n".join(lines)
+    return run_claude(cfg, prompt=prompt, system=_prompt("importer"), schema=TagBatch,
+                      model=cfg.model("tagger"), log=log)
