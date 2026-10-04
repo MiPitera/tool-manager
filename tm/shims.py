@@ -1,6 +1,7 @@
 """Shim scripts in ~/tools/bin. Absolute paths only, so they work identically under sudo."""
 from __future__ import annotations
 
+import os
 import shlex
 import stat
 from pathlib import Path
@@ -19,7 +20,9 @@ def exec_shim(bin_dir: Path, cmd: str, tool: str, target: Path, interpreter: Pat
               env: dict[str, str] | None = None) -> Path:
     target = target.resolve()
     lines = [f"export {k}={shlex.quote(v)}\n" for k, v in (env or {}).items()]
-    argv = [str(interpreter.resolve())] if interpreter else []
+    # absolute but NOT symlink-resolved: a venv's bin/python is a symlink to the base
+    # interpreter; resolving it would bypass the venv's site-packages (its installed deps).
+    argv = [os.path.abspath(interpreter)] if interpreter else []
     argv.append(str(target))
     lines.append(f'exec {" ".join(shlex.quote(a) for a in argv)} "$@"\n')
     return _write(bin_dir / cmd, "".join(lines), tool)

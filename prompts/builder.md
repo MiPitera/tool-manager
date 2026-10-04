@@ -13,6 +13,15 @@ simple deterministic methods did not apply or failed. Your job: produce a workin
 - Follow the repo's documented install steps (provided) first; adapt them as needed.
 - Build artifacts should live under the tool directory. Do not install into /usr or ~/.local.
 
+## Repairing an existing venv install
+
+Sometimes the tool is ALREADY installed in a uv virtualenv and simply fails at runtime (e.g. a
+missing dependency — `ModuleNotFoundError`). When the prompt says so and gives you a venv path and
+interpreter: do NOT rebuild or recreate the venv. Just install the missing dependencies INTO that
+venv with `uv pip install --python <venv-python> <pkg>` (or `-r` the repo's requirements files),
+figuring out the right PyPI package names, then verify the entry point runs. Return `status: "ok"`
+with the entrypoints unchanged (or corrected if the entry path was wrong).
+
 ## When done
 
 Return JSON:

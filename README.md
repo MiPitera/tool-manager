@@ -64,8 +64,15 @@ tm install <url>
   │     └─ on failure / source_build → Agent 2 "builder" (sonnet→opus, Bash+files in src/,
   │        no sudo; asks for apt deps via need_apt)
   ├─ smoke test (`cmd --help`)
+  │     └─ if it fails: auto-repair — install missing modules into the venv, then (with
+  │        consent / --yes) hand it to the build agent to finish the job
   └─ write manifest.json + index into registry.db (SQLite FTS5)
 ```
+
+If a freshly installed tool doesn't run (e.g. `ModuleNotFoundError`), tm repairs it: it installs
+the missing dependencies into the tool's venv (looping over sequential imports), and if that's not
+enough it asks the build agent to fix things. Python deps are taken from both the project
+(`pyproject.toml`) **and** `requirements.txt` — many repos declare them only in the latter.
 
 ### Layout
 

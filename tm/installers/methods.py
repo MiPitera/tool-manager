@@ -18,6 +18,24 @@ def _uv_env(cfg: Config) -> dict:
     return {"UV_PYTHON_INSTALL_DIR": str(cfg.python_dir)}
 
 
+def _install_uv_deps(py: Path, src: Path, env: dict, log: Logger) -> None:
+    """Install a Python project's deps into its venv.
+
+    Installs the project itself when it's packaged, and ALWAYS installs requirements.txt /
+    requirements/*.txt when present — many repos declare deps only in requirements.txt while
+    also shipping a pyproject.toml for tool config (so this must not be an either/or).
+    """
+    if (src / "pyproject.toml").exists() or (src / "setup.py").exists():
+        run(["uv", "pip", "install", "--python", str(py), "-e", str(src)], log=log, env=env, check=False)
+    req = src / "requirements.txt"
+    if req.exists():
+        run(["uv", "pip", "install", "--python", str(py), "-r", str(req)], log=log, env=env, check=False)
+    req_dir = src / "requirements"
+    if req_dir.is_dir():
+        for f in sorted(req_dir.glob("*.txt")):
+            run(["uv", "pip", "install", "--python", str(py), "-r", str(f)], log=log, env=env, check=False)
+
+
 def clone(url: str, src: Path, log: Logger) -> None:
     if src.exists():
         shutil.rmtree(src)
@@ -114,12 +132,7 @@ def install_uv(cfg: Config, name: str, tool_dir: Path, url: str, is_script: bool
     if is_script:
         return _uv_script_entry(cfg, name, src, py, entry_hint, env, log)
 
-    installed = False
-    if (src / "pyproject.toml").exists() or (src / "setup.py").exists():
-        run(["uv", "pip", "install", "--python", str(py), "-e", str(src)], log=log, env=env)
-        installed = True
-    elif (src / "requirements.txt").exists():
-        run(["uv", "pip", "install", "--python", str(py), "-r", str(src / "requirements.txt")], log=log, env=env)
+    _install_uv_deps(py, src, env, log)
 
     entries = _console_scripts(venv, entry_hint, name, src)
     if entries:
@@ -195,8 +208,9 @@ def _uv_script_entry(cfg: Config, name: str, src: Path, py: Path, hints: list[st
                 break
     if script is None:
         raise InstallError(f"could not locate an entry script for {name}; set entrypoints via source build")
-    # shim: venv python + script, both absolute
-    cmd = (hints[0] if hints else name)
+    # command alias from the script's stem, but a generic stem (main/run/app) -> tool name
+    cmd = naming.command_name(script.stem, name)
+    # shim: venv python (NOT symlink-resolved) + script, both absolute
     exec_shim(cfg.bin_dir, cmd, name, script, interpreter=py)
     return {cmd: str(script.resolve())}
 
@@ -296,13 +310,8 @@ def install_static(cfg: Config, name: str, tool_dir: Path, url: str, tool: str,
     env = _uv_env(cfg)
     run(["uv", "venv", str(venv)], log=log, env=env)
     py = venv / "bin" / "python"
-    # project deps
-    if (src / "pyproject.toml").exists() or (src / "setup.py").exists():
-        run(["uv", "pip", "install", "--python", str(py), "-e", str(src)], log=log, env=env, check=False)
-    if (src / "requirements.txt").exists():
-        run(["uv", "pip", "install", "--python", str(py), "-r", str(src / "requirements.txt")],
-            log=log, env=env, check=False)
-    run(["uv", "pip", "install", "--python", str(py), tool], log=log, env=env)
+    _install_uv_deps(py, src, env, log)  # project + requirements
+    run(["uv", "pip", "install", "--python", str(py), tool], log=log, env=env)  # the packager
 
     entries = [src / e for e in (entry_rel or []) if (src / e).exists()]
     if not entries:

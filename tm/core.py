@@ -14,7 +14,7 @@ from tm.config import Config
 from tm.installers import apt, archive, methods
 from tm.manifest import Manifest
 from tm.registry import Registry
-from tm.util import InstallError, Logger, confirm, console, err
+from tm.util import InstallError, Logger, confirm, console, err, run
 
 
 def _derive_name(url: str) -> str:
@@ -84,11 +84,41 @@ def install_from_github(cfg: Config, url: str, *, name: str = "", docker: bool =
     if cls.new_tags:
         tagmod.add_to_vocab(cfg.tags_file, cls.new_tags)
 
-    _smoke_test(cfg, m, log)
+    _run_smoke_with_repair(cfg, name, tool_dir, m, assume_yes, log)
     manifest.save(tool_dir, m)
     _index(cfg, m)
     console.print(f"[green]✓ installed[/] {name} — commands: {', '.join(m.entrypoints) or '(none, see tm info)'}")
     return m
+
+
+def _run_smoke_with_repair(cfg: Config, name: str, tool_dir: Path, m: Manifest,
+                           assume_yes: bool, log: Logger) -> None:
+    """Smoke test and, if it fails for a runnable method, auto-repair: deterministic pip fix,
+    then (with consent) the build agent."""
+    ok, err_tail = _smoke_test(cfg, m, log, quiet=True)
+    if ok or m.method not in REPAIRABLE_METHODS:
+        if not ok:
+            err.print(f"[yellow]⚠ smoke test for {name} did not pass; check `tm info {name}` / install.log[/]")
+        return
+    console.print(f"[yellow]{name} didn't run cleanly — attempting repair…[/]")
+    # loop: install each missing module in turn (requirements often miss transitive imports)
+    for _ in range(6):
+        if not _pip_fix_missing(cfg, tool_dir, err_tail, log):
+            break
+        ok, err_tail = _smoke_test(cfg, m, log, quiet=True)
+        if ok:
+            console.print(f"[green]✓ repaired[/] {name} (installed missing dependencies)")
+            return
+    if not confirm("Try automatic repair with the build agent?", assume_yes=assume_yes):
+        err.print(f"[yellow]left as-is; `{name}` may not work. See install.log[/]")
+        return
+    try:
+        _repair(cfg, name, tool_dir, m, err_tail, log)
+    except InstallError as e:
+        err.print(f"[yellow]repair agent failed: {e}[/]")
+    ok, _ = _smoke_test(cfg, m, log, quiet=False)
+    console.print((f"[green]✓ repaired[/] {name}" if ok else
+                   f"[yellow]still not running cleanly; check `tm info {name}` / install.log[/]"))
 
 
 def _install_static(cfg, name, tool_dir, url, ctx, cls, tool, user_tags, assume_yes, log) -> Manifest:
@@ -220,27 +250,92 @@ def _show_plan(cls: agents.Classification, name: str, url: str) -> None:
     console.print(Panel(t, title=f"Install plan — {url}"))
 
 
-def _smoke_test(cfg: Config, m: Manifest, log: Logger) -> None:
+def _smoke_test(cfg: Config, m: Manifest, log: Logger, quiet: bool = False) -> tuple[bool, str]:
+    """Run `cmd --help`/-h for the first runnable command. Returns (ok, error_tail)."""
     if m.method == "release_windows" or not m.entrypoints:
-        return
+        return True, ""
     for cmd in m.entrypoints:
         if m.is_foreign(cmd):  # foreign shims just print a path — nothing to smoke-test
             continue
         shim = cfg.bin_dir / cmd
         if not shim.exists():
             continue
+        last = ""
         for flag in (["--help"], ["-h"], []):
             try:
                 p = subprocess.run([str(shim), *flag], capture_output=True, text=True, timeout=15)
                 log.write(f"smoke `{cmd} {' '.join(flag)}` -> exit {p.returncode}")
                 if p.returncode == 0:
-                    return
+                    return True, ""
+                last = (p.stderr or p.stdout or "").strip()
             except subprocess.TimeoutExpired:
                 log.write(f"smoke `{cmd} {' '.join(flag)}` timed out")
+                return True, ""  # long-running/interactive tool; treat as ok
             except OSError as e:
                 log.write(f"smoke `{cmd}` error: {e}")
-        err.print(f"[yellow]⚠ smoke test for '{cmd}' did not return cleanly; check `tm info {m.name}` / install.log[/]")
-        return
+                last = str(e)
+        if not quiet:
+            err.print(f"[yellow]⚠ smoke test for '{cmd}' did not return cleanly; check `tm info {m.name}` / install.log[/]")
+        return False, last[-2000:]
+    return True, ""
+
+
+REPAIRABLE_METHODS = {"uv_project", "uv_script", "source_build", "go_install", "release_binary"}
+KNOWN_PYPI = {  # import name -> PyPI package when they differ
+    "yaml": "pyyaml", "bs4": "beautifulsoup4", "PIL": "pillow", "cv2": "opencv-python",
+    "Crypto": "pycryptodome", "OpenSSL": "pyopenssl", "git": "GitPython",
+    "dotenv": "python-dotenv", "serial": "pyserial", "usb": "pyusb", "dns": "dnspython",
+    "jwt": "PyJWT", "nmap": "python-nmap", "magic": "python-magic",
+}
+_MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
+
+
+def _pip_fix_missing(cfg: Config, tool_dir: Path, error: str, log: Logger) -> bool:
+    """Deterministic repair: install the missing top-level module into the tool's venv."""
+    py = tool_dir / "venv" / "bin" / "python"
+    if not py.exists():
+        return False
+    pkgs = {KNOWN_PYPI.get(m.split(".")[0], m.split(".")[0]) for m in _MISSING_RE.findall(error)}
+    pkgs -= {"src", "lib", ""}  # local-layout noise, never a PyPI package
+    if not pkgs:
+        return False
+    ok = False
+    for pkg in sorted(pkgs):
+        console.print(f"[dim]missing module → installing {pkg} into the venv[/]")
+        p = run(["uv", "pip", "install", "--python", str(py), pkg],
+                log=log, env={"UV_PYTHON_INSTALL_DIR": str(cfg.python_dir)}, check=False)
+        ok = ok or (p.returncode == 0)
+    return ok
+
+
+def _repair(cfg: Config, name: str, tool_dir: Path, m: Manifest, error: str, log: Logger) -> None:
+    """Hand a broken install to the build agent to make it actually run (install deps, fix entry)."""
+    src = tool_dir / "src"
+    if not src.exists():
+        src = tool_dir / "app" if (tool_dir / "app").exists() else tool_dir
+    venv = tool_dir / "venv"
+    py = venv / "bin" / "python"
+    entry = next(iter(m.entrypoints.values()), "")
+    failure = (
+        f"The tool '{name}' installed but does not run. Smoke test error:\n{error}\n\n"
+        f"It lives in a uv virtualenv at {venv} (interpreter {py}). "
+        f"Install any MISSING Python dependencies INTO THAT venv using "
+        f"`uv pip install --python {py} <pkg>` (or the repo's requirements files). "
+        f"Do NOT rebuild from scratch and do NOT create a new venv. "
+        f"Entry point: {entry}. Verify it runs, e.g. `{py} {entry} --help`."
+    )
+    model = cfg.model("builder")
+    console.print(f"[bold]Repair agent[/] ({model}) …")
+    res = agents.build(cfg, src, tool_dir, [], "", failure, model, log)
+    if res.status == "need_apt" and res.apt_needed:
+        if confirm(f"Repair needs system packages: {', '.join(res.apt_needed)}. Install?"):
+            for dep in res.apt_needed:
+                apt.apt_install(dep, log, assume_yes=True)
+    if res.entrypoints:  # agent produced/relocated entrypoints → re-shim
+        ep = {c: (str((src / t).resolve()) if not Path(t).is_absolute() else t)
+              for c, t in res.entrypoints.items()}
+        methods.make_shims(cfg, name, ep)
+        m.entrypoints.update(ep)
 
 
 def _index(cfg: Config, m: Manifest) -> None:
