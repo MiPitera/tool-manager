@@ -11,14 +11,50 @@ from rich.table import Table
 from tm import manifest, shims
 from tm.config import Config
 from tm.installers import apt
-from tm.util import console
+from tm.registry import Registry
+from tm.util import confirm, console
 
 
-def doctor(cfg: Config) -> None:
+def doctor(cfg: Config, prune: bool = False) -> None:
     _check_path(cfg)
     _check_shims(cfg)
     _check_apt(cfg)
+    _check_apt_nonprograms(cfg, prune)
     _find_orphans(cfg)
+
+
+def _check_apt_nonprograms(cfg: Config, prune: bool) -> None:
+    """Cataloged apt entries that ship no executable — not programs, shouldn't be in the catalog."""
+    offenders = []
+    for tool_dir, m in manifest.iter_all(cfg.root):
+        if m.method != "apt":
+            continue
+        pkg = m.apt_package or m.name
+        if not apt.version_installed(pkg):
+            continue  # handled by _check_apt (removed from system)
+        if not m.entrypoints or not apt.has_program(pkg):
+            offenders.append((tool_dir, m))
+    if not offenders:
+        return
+    names = ", ".join(m.name for _, m in offenders)
+    console.print(f"\n[yellow]apt entries that are not programs[/] ({len(offenders)}): {names}")
+    if not prune:
+        console.print("[dim]run `tm doctor --prune` to drop them from the catalog "
+                      "(the packages themselves stay installed).[/]")
+        return
+    if not confirm(f"Drop {len(offenders)} non-program apt entries from the catalog?", default=True):
+        return
+    reg = Registry(cfg.db_path)
+    try:
+        for tool_dir, m in offenders:
+            mf = manifest.path_for(tool_dir)
+            if mf.exists():
+                mf.unlink()
+            reg.delete(m.name)
+            console.print(f"  pruned {m.name}")
+    finally:
+        reg.close()
+    console.print(f"[green]✓ pruned {len(offenders)} entries[/] (packages left installed)")
 
 
 def _check_path(cfg: Config) -> None:

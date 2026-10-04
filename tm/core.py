@@ -192,7 +192,8 @@ def _index(cfg: Config, m: Manifest) -> None:
 
 # ---------------------------------------------------------------- apt entry points
 
-def install_apt(cfg: Config, pkg: str, user_tags: list[str] | None = None, assume_yes: bool = False) -> Manifest:
+def install_apt(cfg: Config, pkg: str, user_tags: list[str] | None = None,
+                assume_yes: bool = False, force: bool = False) -> Manifest | None:
     if not apt.pkg_exists(pkg):
         raise InstallError(f"apt package not found: {pkg}")
     name = pkg
@@ -202,6 +203,12 @@ def install_apt(cfg: Config, pkg: str, user_tags: list[str] | None = None, assum
         raise InstallError("aborted")
     apt.apt_install(pkg, log, assume_yes=True)
     meta = apt.pkg_metadata(pkg)
+    if not meta["binaries"] and not force:
+        err.print(f"[yellow]'{pkg}' ships no executable program (looks like a library/data "
+                  f"package).[/] It stays installed on the system.")
+        if not confirm("Catalog it anyway?", default=False, assume_yes=assume_yes):
+            console.print(f"[dim]not cataloged; `{pkg}` remains installed via apt.[/]")
+            return None
     vocab = tagmod.vocab_text(cfg.tags_file)
     try:
         batch = agents.tag_packages(cfg, [meta], vocab, log)
@@ -243,6 +250,9 @@ def import_apt(cfg: Config, batch_size: int = 30, assume_yes: bool = False) -> i
         for i in range(0, len(pkgs), batch_size):
             chunk = pkgs[i:i + batch_size]
             metas = [apt.pkg_metadata(p) for p in chunk]
+            metas = [mt for mt in metas if mt["binaries"]]  # programs only, never libraries/data
+            if not metas:
+                continue
             console.print(f"Tagging {i + 1}–{i + len(chunk)} of {len(pkgs)} …")
             try:
                 tb = agents.tag_packages(cfg, metas, vocab)

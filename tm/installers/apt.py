@@ -71,6 +71,11 @@ def list_binaries(pkg: str) -> list[str]:
     return out
 
 
+def has_program(pkg: str) -> bool:
+    """True if the package ships at least one executable in a standard bin dir."""
+    return bool(list_binaries(pkg))
+
+
 def version_installed(pkg: str) -> str:
     p = subprocess.run(["dpkg-query", "-W", "-f=${Version}", pkg], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else ""
@@ -88,13 +93,28 @@ def priority_of(pkg: str) -> str:
     return p.stdout.strip().lower() if p.returncode == 0 else ""
 
 
+# package name suffixes/prefixes that never ship a user program (cheap pre-filter)
+NON_PROGRAM_SUFFIXES = ("-dev", "-doc", "-dbg", "-dbgsym", "-data", "-common", "-l10n")
+NON_PROGRAM_PREFIXES = ("fonts-",)
+META_PREFIXES = ("kali-", "task-")
+
+
 def interesting_packages() -> list[str]:
-    """Manual packages minus base-system ones and meta/task packages."""
+    """Manually-installed packages that actually ship a runnable program.
+
+    Filters out base-system/meta packages, obvious non-program packages by name
+    (-dev/-doc/fonts-/…), and — the hard gate — anything with no executable in a
+    standard bin dir (e.g. libraries and data packages such as libobasis*-librelogo).
+    """
     out = []
     for pkg in manual_packages():
-        if pkg.startswith(("kali-", "task-", "lib")) and pkg.startswith(("kali-", "task-")):
+        if pkg.startswith(META_PREFIXES):
+            continue
+        if pkg.endswith(NON_PROGRAM_SUFFIXES) or pkg.startswith(NON_PROGRAM_PREFIXES):
             continue
         if priority_of(pkg) in BASE_PRIORITIES:
+            continue
+        if not has_program(pkg):
             continue
         out.append(pkg)
     return out

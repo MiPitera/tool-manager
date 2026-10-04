@@ -36,6 +36,7 @@ tm list                          tm list --method apt
 tm search kerberos               tm search --tag windows --tag ad
 tm info ffuf                     tm doctor          # health + find your old scattered binaries
 tm import-apt                    # catalog + auto-tag packages you already apt-installed
+tm doctor --prune                # drop cataloged apt entries that ship no program
 
 tm tag add ffuf web             tm tag rm ffuf dns       tm tag set ffuf web fuzzing
 tm edit ffuf                    # manifest.json in $EDITOR
@@ -75,6 +76,17 @@ tm install <url>
 binaries, `+x` files, shebang scripts, `.py` with a main; override with `--entry`), shimmed with
 absolute paths, and described + tagged by the agent. `tm doctor` lists unmanaged binaries you can
 pull in this way.
+
+### apt — programs, not packages
+
+The catalog holds things you can **run**. `tm import-apt` and `interesting_packages` skip any
+package that ships no executable in a standard bin dir (`/usr/bin`, `/usr/sbin`, …) — so
+libraries and data packages like `libobasis*-librelogo` or `python3-requests` never get
+cataloged, while `libreoffice` (which does ship a program) still does. `tm install --apt <pkg>`
+on a package with no program warns and asks before cataloging (`--force` to skip the prompt);
+either way the package stays installed on the system. `tm doctor` flags any already-cataloged
+apt entry that isn't a program, and `tm doctor --prune` drops those catalog entries (the
+packages themselves are left installed).
 
 ### sudo compatibility
 

@@ -56,6 +56,7 @@ def install(
     name: str = typer.Option("", "--name", help="Override the tool name"),
     method: str = typer.Option("", "--method", help="Force install method"),
     tag: list[str] = typer.Option([], "--tag", help="Add a user tag (repeatable)"),
+    force: bool = typer.Option(False, "--force", help="Catalog an apt package even if it ships no program"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes to prompts"),
 ):
     """Install a tool from GitHub (or apt) in its own isolated directory."""
@@ -63,7 +64,7 @@ def install(
     try:
         if apt_pkg or target.startswith("apt:"):
             pkg = target.removeprefix("apt:")
-            core.install_apt(cfg, pkg, user_tags=tag, assume_yes=yes)
+            core.install_apt(cfg, pkg, user_tags=tag, assume_yes=yes, force=force)
         else:
             core.install_from_github(cfg, target, name=name, docker=docker, method=method,
                                      user_tags=tag, assume_yes=yes)
@@ -252,10 +253,11 @@ def reindex():
 
 
 @app.command()
-def doctor():
-    """Health check + find unmanaged binaries from your old setup."""
+def doctor(prune: bool = typer.Option(False, "--prune",
+                                      help="Drop cataloged apt entries that ship no program")):
+    """Health check, find unmanaged binaries, and (with --prune) drop apt entries with no program."""
     from tm.doctor import doctor as _doctor
-    _doctor(_cfg())
+    _doctor(_cfg(), prune=prune)
 
 
 @app.command()
