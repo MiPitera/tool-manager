@@ -179,8 +179,10 @@ def _run_method(cfg, name, tool_dir, url, ctx, cls, log) -> dict[str, str]:
         if mth == "release_windows":
             return methods.install_release_windows(cfg, name, tool_dir, ctx.release_assets, cls.release_asset, log)
         if mth in ("uv_project", "uv_script"):
-            return methods.install_uv(cfg, name, tool_dir, url, mth == "uv_script",
-                                      cls.entrypoints, cls.python_version, log)
+            ep = methods.install_uv(cfg, name, tool_dir, url, mth == "uv_script",
+                                    cls.entrypoints, cls.python_version, log)
+            methods.make_shims(cfg, name, ep)
+            return ep
         if mth == "go_install":
             ep = methods.install_go(cfg, name, tool_dir, url, cls.go_package, cls.entrypoints, log)
             methods.make_shims(cfg, name, ep)

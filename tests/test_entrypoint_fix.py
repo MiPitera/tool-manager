@@ -56,3 +56,39 @@ def test_hint_wins(tmp_path):
     src = _src_with_scripts(tmp_path, {})
     out = methods._console_scripts(venv, ["laZagne"], "x", src)
     assert list(out) == ["laZagne"]
+
+
+def test_uv_project_writes_bin_shims(tmp_path, monkeypatch):
+    """Regression: uv_project console-script entrypoints must get shims in bin/.
+
+    install_uv's console-script path only *returns* entries; the shim is written by
+    _run_method via make_shims (same as release_binary/go_install). Without that call
+    a uv tool like semgrep reports "installed" but is `command not found`.
+    """
+    from types import SimpleNamespace
+    from tm import core
+    from tm.config import Config
+
+    cfg = Config(root=tmp_path, models={}, agents={}, docker={})
+    cfg.bin_dir.mkdir(parents=True, exist_ok=True)
+
+    target = tmp_path / "venv" / "bin" / "semgrep"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\necho hi\n")
+    target.chmod(target.stat().st_mode | stat.S_IXUSR)
+
+    monkeypatch.setattr(methods, "install_uv",
+                        lambda *a, **k: {"semgrep": str(target), "pysemgrep": str(target)})
+    cls = SimpleNamespace(method="uv_project", entrypoints=[], python_version="")
+    ep = core._run_method(cfg, "semgrep", tmp_path, "url", object(), cls, _Log())
+
+    assert set(ep) == {"semgrep", "pysemgrep"}
+    for cmd in ep:
+        shim = cfg.bin_dir / cmd
+        assert shim.exists(), f"no shim written for {cmd}"
+        assert "# managed by tm" in shim.read_text()
+
+
+class _Log:
+    def write(self, *a, **k):
+        pass
